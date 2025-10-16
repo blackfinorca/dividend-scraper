@@ -1,0 +1,122 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Background Colors */
+    --color-background: #FAFAFA; /* warm off-white */
+    --color-foreground: #0F172A; /* near-black slate */
+    --color-card: #FFFFFF; /* pure white */
+    --color-card-foreground: #0F172A; /* near-black slate */
+    --color-popover: #FFFFFF; /* pure white */
+    --color-popover-foreground: #0F172A; /* near-black slate */
+    --color-muted: #F1F5F9; /* light slate */
+    --color-muted-foreground: #475569; /* medium gray */
+    
+    /* Border and Input */
+    --color-border: #E2E8F0; /* light gray border */
+    --color-input: #FFFFFF; /* pure white */
+    --color-ring: #1E40AF; /* deep professional blue */
+    
+    /* Primary Colors */
+    --color-primary: #1E40AF; /* deep professional blue */
+    --color-primary-foreground: #FFFFFF; /* white */
+    
+    /* Secondary Colors */
+    --color-secondary: #64748B; /* sophisticated slate gray */
+    --color-secondary-foreground: #FFFFFF; /* white */
+    
+    /* Accent Colors */
+    --color-accent: #0EA5E9; /* bright sky blue */
+    --color-accent-foreground: #FFFFFF; /* white */
+    
+    /* Status Colors */
+    --color-success: #059669; /* professional emerald green */
+    --color-success-foreground: #FFFFFF; /* white */
+    
+    --color-warning: #D97706; /* amber orange */
+    --color-warning-foreground: #FFFFFF; /* white */
+    
+    --color-error: #DC2626; /* clear red */
+    --color-error-foreground: #FFFFFF; /* white */
+    
+    --color-destructive: #DC2626; /* clear red */
+    --color-destructive-foreground: #FFFFFF; /* white */
+    
+    /* Radius */
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  /* Typography */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+  }
+  
+  body, p, span, div {
+    font-family: 'Inter', sans-serif;
+    font-weight: 400;
+  }
+  
+  .font-data {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 400;
+  }
+  
+  /* Animation preferences */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Micro-interactions */
+  .hover-transition {
+    @apply transition-all duration-150 ease-out;
+  }
+  
+  .state-transition {
+    @apply transition-all duration-300 ease-in-out;
+  }
+  
+  /* Elevation system */
+  .elevation-minimal {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  
+  /* Data table styles */
+  .data-cell {
+    @apply font-data text-sm;
+  }
+  
+  /* Status indicators */
+  .status-positive {
+    @apply text-success;
+  }
+  
+  .status-negative {
+    @apply text-error;
+  }
+  
+  .status-neutral {
+    @apply text-muted-foreground;
+  }
+}
