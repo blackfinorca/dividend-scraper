@@ -9,18 +9,6 @@ const TICKER_CATALOGUE_STORAGE_KEY = 'sgDividendTickerCatalogue';
 
 const buildPriceKey = (offset) => `D${offset >= 0 ? '+' : ''}${offset}`;
 
-const loadJsonRows = async (url) => {
-  const response = await fetch(url, { cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error(`Unable to load dataset from ${url}`);
-  }
-  const json = await response.json();
-  if (!Array.isArray(json)) {
-    throw new Error(`Dataset at ${url} is not an array.`);
-  }
-  return json;
-};
-
 const loadCsvRows = async () => {
   const response = await fetch(CSV_URL, { cache: 'no-store' });
   if (!response.ok) {
@@ -33,27 +21,17 @@ const loadCsvRows = async () => {
 };
 
 const loadDashboardRows = async () => {
-  try {
-    return await loadJsonRows(DASHBOARD_JSON_URL);
-  } catch (jsonError) {
-    console.warn('Unable to load dashboard JSON dataset, falling back to CSV.', jsonError);
-    const response = await fetch(DASHBOARD_CSV_URL, { cache: 'no-store' });
-    if (!response.ok) {
-      throw new Error('Unable to load dashboard dataset. Please try again later.');
-    }
-    const csvText = await response.text();
-    const parsedRows = csvParse(csvText);
-    return parsedRows ?? [];
+  const response = await fetch(DASHBOARD_CSV_URL, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Unable to load dashboard dataset. Please try again later.');
   }
+  const csvText = await response.text();
+  const parsedRows = csvParse(csvText);
+  return parsedRows ?? [];
 };
 
 const loadPrimaryRows = async () => {
-  try {
-    return await loadJsonRows(CSV_JSON_URL);
-  } catch (jsonError) {
-    console.warn('Unable to load primary JSON dataset, falling back to CSV.', jsonError);
-    return loadCsvRows();
-  }
+  return loadCsvRows();
 };
 
 const parsePrice = (value) => {
