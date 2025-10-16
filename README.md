@@ -105,3 +105,4 @@ npm run build
 - Styled with Tailwind CSS
 
 Made by BlackFinOrca
+# dividend-scraper
