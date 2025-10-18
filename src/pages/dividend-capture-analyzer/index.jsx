@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import ApplicationHeader from '../../components/ui/ApplicationHeader';
 import StatusBanner from '../../components/ui/StatusBanner';
 import ControlPanel from './components/ControlPanel';
@@ -24,6 +25,9 @@ const DividendCaptureAnalyzer = () => {
   const [tickerOptionsLoading, setTickerOptionsLoading] = useState(false);
   const [tickerOptionsError, setTickerOptionsError] = useState('');
   const [isGridFullScreen, setIsGridFullScreen] = useState(false);
+  const [initialTicker, setInitialTicker] = useState('');
+  const [highlightFetchButton, setHighlightFetchButton] = useState(false);
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     let isMounted = true;
@@ -55,6 +59,25 @@ const DividendCaptureAnalyzer = () => {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    const ticker = (searchParams.get('ticker') || '').trim().toUpperCase();
+    if (ticker) {
+      setInitialTicker(ticker);
+      setHighlightFetchButton(true);
+    } else {
+      setInitialTicker('');
+      setHighlightFetchButton(false);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!highlightFetchButton) {
+      return;
+    }
+    const timeout = setTimeout(() => setHighlightFetchButton(false), 2500);
+    return () => clearTimeout(timeout);
+  }, [highlightFetchButton]);
 
   const handleFetchData = useCallback(async (params) => {
     setLoading(true);
@@ -235,6 +258,8 @@ const DividendCaptureAnalyzer = () => {
             tickerOptions={tickerOptions}
             tickerOptionsLoading={tickerOptionsLoading}
             tickerOptionsError={tickerOptionsError}
+            initialTicker={initialTicker}
+            highlightFetchButton={highlightFetchButton}
             className="mb-6"
           />
 

@@ -1,37 +1,174 @@
-import { csvParse } from 'd3-dsv';
-
 const OFFSETS = Array.from({ length: 41 }, (_, idx) => idx - 10); // -10 .. +30
-const CSV_JSON_URL = '/yahoo_stock_data.json';
-const CSV_URL = '/yahoo_stock_data.csv';
-const DASHBOARD_JSON_URL = '/dashboard_data.json';
-const DASHBOARD_CSV_URL = '/dashboard_data.csv';
+const SNAPSHOT_URL = '/sgx_snapshot.json';
 const TICKER_CATALOGUE_STORAGE_KEY = 'sgDividendTickerCatalogue';
 
 const buildPriceKey = (offset) => `D${offset >= 0 ? '+' : ''}${offset}`;
 
-const loadCsvRows = async () => {
-  const response = await fetch(CSV_URL, { cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error('Unable to load dividend dataset. Please try again later.');
-  }
+let snapshotCache = null;
+let snapshotPromise = null;
 
-  const csvText = await response.text();
-  const parsedRows = csvParse(csvText);
-  return parsedRows ?? [];
+const normalizePriceMap = (rawPrices) => {
+  const prices = {};
+  OFFSETS.forEach((offset) => {
+    const key = buildPriceKey(offset);
+    const raw = rawPrices?.[key];
+    if (raw === undefined || raw === null || raw === '') {
+      prices[key] = null;
+    } else if (typeof raw === 'number') {
+      prices[key] = raw.toFixed(2);
+    } else {
+      prices[key] = String(raw);
+    }
+    if (offset === 0) {
+      if (prices[key] !== null) {
+        prices.D0 = prices[key];
+      }
+    }
+  });
+  if (!prices.D0 && rawPrices?.D0) {
+    prices.D0 = String(rawPrices.D0);
+  }
+  if (!prices['D+0'] && rawPrices?.['D+0']) {
+    prices['D+0'] = String(rawPrices['D+0']);
+  }
+  if (!prices['D+0'] && prices.D0) {
+    prices['D+0'] = prices.D0;
+  }
+  if (!prices.D0 && prices['D+0']) {
+    prices.D0 = prices['D+0'];
+  }
+  return prices;
 };
 
-const loadDashboardRows = async () => {
-  const response = await fetch(DASHBOARD_CSV_URL, { cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error('Unable to load dashboard dataset. Please try again later.');
+const normalizeUpcomingEntry = (entry) => {
+  if (!entry) {
+    return null;
   }
-  const csvText = await response.text();
-  const parsedRows = csvParse(csvText);
-  return parsedRows ?? [];
+  const exDate = (entry.exDate || '').trim();
+  if (!exDate) {
+    return null;
+  }
+  const amountValue =
+    typeof entry.amountValue === 'number' ? entry.amountValue : parseAmountValue(entry.amountLabel);
+  const yieldValue =
+    typeof entry.yieldValue === 'number' ? entry.yieldValue : parsePercentageValue(entry.yieldLabel);
+
+  return {
+    ticker: (entry.ticker || '').trim().toUpperCase(),
+    companyName: entry.companyName || '',
+    exDate,
+    payDate: (entry.payDate || '').trim() || null,
+    amountValue: Number.isFinite(amountValue) ? amountValue : null,
+    amountLabel:
+      Number.isFinite(amountValue) && !entry.amountLabel
+        ? amountValue.toFixed(4)
+        : (entry.amountLabel || null),
+    yieldValue: Number.isFinite(yieldValue) ? yieldValue : null,
+    yieldLabel:
+      Number.isFinite(yieldValue) && !entry.yieldLabel
+        ? `${yieldValue.toFixed(2)}%`
+        : (entry.yieldLabel || null),
+  };
 };
 
-const loadPrimaryRows = async () => {
-  return loadCsvRows();
+const normalizeEventEntry = (event) => {
+  if (!event) {
+    return null;
+  }
+  const exDate = (event.exDate || '').trim();
+  if (!exDate) {
+    return null;
+  }
+  const dividendAmount =
+    typeof event.dividendAmount === 'number'
+      ? event.dividendAmount
+      : parseAmountValue(event.dividendAmountLabel || event.dividendAmount);
+  const exDatePrice =
+    typeof event.exDatePrice === 'number'
+      ? event.exDatePrice
+      : parseAmountValue(event.exDatePriceLabel || event.exDatePrice);
+
+  return {
+    exDate,
+    dividendAmount: Number.isFinite(dividendAmount) ? dividendAmount : null,
+    dividendAmountLabel:
+      Number.isFinite(dividendAmount) && !event.dividendAmountLabel
+        ? dividendAmount.toFixed(4)
+        : (event.dividendAmountLabel || null),
+    exDatePrice: Number.isFinite(exDatePrice) ? exDatePrice : null,
+    exDatePriceLabel:
+      Number.isFinite(exDatePrice) && !event.exDatePriceLabel
+        ? exDatePrice.toFixed(2)
+        : (event.exDatePriceLabel || null),
+    prices: normalizePriceMap(event.prices || {}),
+  };
+};
+
+const normaliseSnapshot = (rawSnapshot) => {
+  const tickers = Array.isArray(rawSnapshot?.tickers) ? rawSnapshot.tickers : [];
+  const tickerMap = new Map();
+
+  const normalisedTickers = tickers
+    .map((entry) => {
+      const ticker = (entry?.ticker || '').trim().toUpperCase();
+      if (!ticker) {
+        return null;
+      }
+
+      const normalisedEvents = Array.isArray(entry.events)
+        ? entry.events
+            .map(normalizeEventEntry)
+            .filter(Boolean)
+        : [];
+
+      normalisedEvents.sort((a, b) => {
+        const aDate = new Date(a.exDate);
+        const bDate = new Date(b.exDate);
+        return aDate.getTime() - bDate.getTime();
+      });
+
+      const normalisedEntry = {
+        ticker,
+        companyName: entry?.companyName || '',
+        displayTicker: entry?.ticker || ticker,
+        events: normalisedEvents,
+        upcoming: normalizeUpcomingEntry(entry?.upcoming),
+      };
+      tickerMap.set(ticker, normalisedEntry);
+      return normalisedEntry;
+    })
+    .filter(Boolean);
+
+  return {
+    version: rawSnapshot?.version ?? 1,
+    generatedAt: rawSnapshot?.generatedAt || null,
+    tickers: normalisedTickers,
+    tickerMap,
+  };
+};
+
+const loadSnapshot = async ({ forceRefresh = false } = {}) => {
+  if (snapshotCache && !forceRefresh) {
+    return snapshotCache;
+  }
+  if (!snapshotPromise || forceRefresh) {
+    snapshotPromise = fetch(SNAPSHOT_URL, { cache: 'no-store' })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Unable to load dividend snapshot. Please try again later.');
+        }
+        return response.json();
+      })
+      .then((data) => {
+        snapshotCache = normaliseSnapshot(data);
+        return snapshotCache;
+      })
+      .catch((error) => {
+        snapshotPromise = null;
+        throw error;
+      });
+  }
+  return snapshotPromise;
 };
 
 const parsePrice = (value) => {
@@ -59,62 +196,6 @@ const parseAmountValue = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
-const parseMarketCap = (value) => {
-  if (value === undefined || value === null || value === '') return null;
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-
-  const cleaned = String(value)
-    .replace(/[\s,$€£¥₩₽₹₫₴₦฿₡₱₲₵₸₺₭₪₣₥₢₯₠₣ƒ~]/g, '')
-    .toUpperCase();
-
-  const match = cleaned.match(/(-?\d+(?:\.\d+)?)([KMBT]?)/);
-  if (!match) {
-    return null;
-  }
-
-  const [, numberStr, suffix = ''] = match;
-  const numeric = parseFloat(numberStr);
-  if (!Number.isFinite(numeric)) {
-    return null;
-  }
-
-  const multipliers = {
-    K: 1e3,
-    M: 1e6,
-    B: 1e9,
-    T: 1e12,
-  };
-
-  const multiplier = multipliers[suffix] || 1;
-  return numeric * multiplier;
-};
-
-const formatMarketCapDisplay = (rawValue, numericValue) => {
-  if (rawValue !== undefined && rawValue !== null) {
-    const trimmed = String(rawValue).trim();
-    if (trimmed) {
-      return trimmed;
-    }
-  }
-
-  if (!Number.isFinite(numericValue)) {
-    return '';
-  }
-
-  try {
-    return new Intl.NumberFormat('en-SG', {
-      style: 'currency',
-      currency: 'SGD',
-      notation: 'compact',
-      maximumFractionDigits: 1,
-    }).format(numericValue);
-  } catch (error) {
-    return numericValue.toLocaleString('en-SG');
-  }
-};
-
 const itemDateCompare = (a, b) => {
   if (a < b) return -1;
   if (a > b) return 1;
@@ -129,57 +210,31 @@ const normaliseInputTicker = (ticker) => {
   return noSuffix;
 };
 
-const buildPriceMapFromRow = (row) => {
-  const prices = {};
+const extractPriceValues = (priceMap) => {
+  if (!priceMap) {
+    return [];
+  }
+  const values = [];
+  const seenKeys = new Set();
+
   OFFSETS.forEach((offset) => {
     const key = buildPriceKey(offset);
-    prices[key] = null;
-    if (offset === 0) {
-      prices.D0 = null;
-    }
-  });
-
-  const exPrice = parsePrice(row['Ex-Date Price']);
-  if (exPrice !== null) {
-    const formatted = exPrice.toFixed(2);
-    prices.D0 = formatted;
-    prices['D+0'] = formatted;
-  }
-
-  Object.entries(row).forEach(([key, value]) => {
-    if (key === 'Ex-Date Price') return;
-    const match = /^Price D([+-]\d+)$/.exec(key);
-    if (!match) return;
-    const offset = parseInt(match[1], 10);
-    if (Number.isNaN(offset)) return;
-    const price = parsePrice(value);
-    const formattedKey = buildPriceKey(offset);
-    const formattedValue = price !== null ? price.toFixed(2) : null;
-    prices[formattedKey] = formattedValue;
-    if (offset === 0) {
-      prices.D0 = formattedValue;
-    }
-  });
-
-  return prices;
-};
-
-const extractPriceValues = (row) => {
-  const values = [];
-  const exPrice = parsePrice(row['Ex-Date Price']);
-  if (exPrice !== null) {
-    values.push(exPrice);
-  }
-
-  Object.keys(row).forEach((key) => {
-    if (!key.startsWith('Price D')) {
+    if (seenKeys.has(key)) {
       return;
     }
-    const price = parsePrice(row[key]);
+    seenKeys.add(key);
+    const price = parsePrice(priceMap[key]);
     if (price !== null) {
       values.push(price);
     }
   });
+
+  if (!seenKeys.has('D0')) {
+    const price = parsePrice(priceMap.D0);
+    if (price !== null) {
+      values.push(price);
+    }
+  }
 
   return values;
 };
@@ -203,16 +258,16 @@ const calculateVolatility = (prices) => {
   return stdDev / Math.abs(mean);
 };
 
-const filterByDateRange = (rows, startDate, endDate) => {
+const filterByDateRange = (items, startDate, endDate) => {
   const start = startDate ? new Date(startDate) : null;
   const end = endDate ? new Date(endDate) : null;
 
   if (!start && !end) {
-    return rows;
+    return items;
   }
 
-  return rows.filter((row) => {
-    const rowDate = new Date(row['Ex-Dividend Date']);
+  return items.filter((item) => {
+    const rowDate = new Date(item.exDate);
     if (Number.isNaN(rowDate.getTime())) return false;
     if (start && rowDate < start) return false;
     if (end && rowDate > end) return false;
@@ -221,141 +276,85 @@ const filterByDateRange = (rows, startDate, endDate) => {
 };
 
 export async function fetchSGXDividendData({ ticker, startDate, endDate }) {
-  const parsedRows = await loadPrimaryRows();
-
-  if (!parsedRows?.length) {
-    return [];
-  }
-
+  const snapshot = await loadSnapshot();
   const normalisedTicker = normaliseInputTicker(ticker);
   if (!normalisedTicker) {
     throw new Error('A valid ticker symbol is required to fetch data.');
   }
 
-  const matchingRows = parsedRows.filter(
-    (row) => (row?.Ticker || '').toUpperCase() === normalisedTicker
-  );
-
-  if (!matchingRows.length) {
+  const tickerEntry = snapshot.tickerMap.get(normalisedTicker);
+  if (!tickerEntry) {
     throw new Error('No records found for the requested ticker in the offline dataset.');
   }
 
-  const filteredRows = filterByDateRange(matchingRows, startDate, endDate);
+  const filteredEvents = filterByDateRange(tickerEntry.events || [], startDate, endDate);
 
-  if (!filteredRows.length) {
-    return [];
-  }
-
-  return filteredRows.map((row) => {
-    const exDate = row['Ex-Dividend Date'];
-    const dividendAmount = parsePrice(row['Dividend Amount']) ?? 0;
-    const prices = buildPriceMapFromRow(row);
-
-    return {
-      id: `${normalisedTicker}-${exDate}`,
-      exDate,
-      dividendPerShare: dividendAmount,
-      prices,
-      companyName: row['Company Name'] || null,
-    };
-  });
+  return filteredEvents.map((event) => ({
+    id: `${normalisedTicker}-${event.exDate}`,
+    exDate: event.exDate,
+    dividendPerShare: Number.isFinite(event.dividendAmount) ? event.dividendAmount : 0,
+    prices: event.prices || {},
+    companyName: tickerEntry.companyName || null,
+  }));
 }
 
 export async function fetchPortfolioSummary() {
-  const parsedRows = await loadPrimaryRows();
+  const snapshot = await loadSnapshot();
 
-  if (!parsedRows?.length) {
-    return [];
-  }
+  const summaries = snapshot.tickers.map((entry) => {
+    const events = entry.events || [];
+    let dividendSum = 0;
+    let dividendCount = 0;
+    let yieldSum = 0;
+    let yieldCount = 0;
+    let volatilitySum = 0;
+    let volatilityCount = 0;
+    let latestExDate = null;
 
-  const tickerMap = new Map();
-
-  parsedRows.forEach((row) => {
-    const tickerRaw = (row?.Ticker || '').trim();
-    if (!tickerRaw) {
-      return;
-    }
-
-    const ticker = tickerRaw.toUpperCase();
-    const companyName = row['Company Name'] || '';
-    const dividendAmount = parsePrice(row['Dividend Amount']);
-    const exPrice = parsePrice(row['Ex-Date Price']);
-    const exDate = row['Ex-Dividend Date'] || null;
-    const rawMarketCap = getValue(row, ['Market Cap', 'market cap', 'market_cap', 'marketCap']);
-    const marketCapValue = parseMarketCap(rawMarketCap);
-    const marketCapDisplay = formatMarketCapDisplay(rawMarketCap, marketCapValue);
-
-    if (!tickerMap.has(ticker)) {
-      tickerMap.set(ticker, {
-        ticker,
-        companyName,
-        eventCount: 0,
-        dividendSum: 0,
-        dividendCount: 0,
-        yieldSum: 0,
-        yieldCount: 0,
-        volatilitySum: 0,
-        volatilityCount: 0,
-        latestExDate: null,
-        marketCap: Number.isFinite(marketCapValue) ? marketCapValue : null,
-        marketCapDisplay: marketCapDisplay || '',
-      });
-    }
-
-    const entry = tickerMap.get(ticker);
-    entry.eventCount += 1;
-    if (companyName && !entry.companyName) {
-      entry.companyName = companyName;
-    }
-
-    if (Number.isFinite(marketCapValue)) {
-      if (!Number.isFinite(entry.marketCap) || marketCapValue > entry.marketCap) {
-        entry.marketCap = marketCapValue;
-        entry.marketCapDisplay = marketCapDisplay || entry.marketCapDisplay;
+    events.forEach((event) => {
+      if (Number.isFinite(event.dividendAmount)) {
+        dividendSum += event.dividendAmount;
+        dividendCount += 1;
       }
-    } else if (marketCapDisplay && !entry.marketCapDisplay) {
-      entry.marketCapDisplay = marketCapDisplay;
-    }
 
-    if (dividendAmount !== null) {
-      entry.dividendSum += dividendAmount;
-      entry.dividendCount += 1;
-    }
+      if (
+        Number.isFinite(event.dividendAmount) &&
+        Number.isFinite(event.exDatePrice) &&
+        event.exDatePrice > 0
+      ) {
+        yieldSum += (event.dividendAmount / event.exDatePrice) * 100;
+        yieldCount += 1;
+      }
 
-    if (dividendAmount !== null && exPrice !== null && exPrice > 0) {
-      entry.yieldSum += (dividendAmount / exPrice) * 100;
-      entry.yieldCount += 1;
-    }
+      const priceValues = extractPriceValues(event.prices);
+      const eventVolatility = calculateVolatility(priceValues);
+      if (eventVolatility !== null) {
+        volatilitySum += eventVolatility;
+        volatilityCount += 1;
+      }
 
-    const priceValues = extractPriceValues(row);
-    const eventVolatility = calculateVolatility(priceValues);
-    if (eventVolatility !== null) {
-      entry.volatilitySum += eventVolatility;
-      entry.volatilityCount += 1;
-    }
-
-    if (exDate) {
-      const currentLatest = entry.latestExDate ? new Date(entry.latestExDate) : null;
-      const candidateDate = new Date(exDate);
-      if (!Number.isNaN(candidateDate.getTime())) {
-        if (!currentLatest || candidateDate > currentLatest) {
-          entry.latestExDate = exDate;
+      if (event.exDate) {
+        const eventDate = new Date(event.exDate);
+        if (!Number.isNaN(eventDate.getTime())) {
+          if (!latestExDate || eventDate > new Date(latestExDate)) {
+            latestExDate = event.exDate;
+          }
         }
       }
-    }
-  });
+    });
 
-  const summaries = Array.from(tickerMap.values()).map((entry) => ({
-    ticker: entry.ticker,
-    companyName: entry.companyName,
-    events: entry.eventCount,
-    averageDividend: entry.dividendCount ? entry.dividendSum / entry.dividendCount : null,
-    averageYield: entry.yieldCount ? entry.yieldSum / entry.yieldCount : null,
-    averageVolatility: entry.volatilityCount ? entry.volatilitySum / entry.volatilityCount : null,
-    latestExDate: entry.latestExDate,
-    marketCap: Number.isFinite(entry.marketCap) ? entry.marketCap : null,
-    marketCapDisplay: entry.marketCapDisplay || '',
-  }));
+    return {
+      ticker: entry.ticker,
+      companyName: entry.companyName,
+      events: events.length,
+      averageDividend: dividendCount ? dividendSum / dividendCount : null,
+      averageYield: yieldCount ? yieldSum / yieldCount : null,
+      averageVolatility: volatilityCount ? volatilitySum / volatilityCount : null,
+      latestExDate,
+      marketCap: null,
+      marketCapDisplay: '',
+    };
+  });
 
   const benchmark = summaries.find((summary) => summary.ticker === 'S68');
   const benchmarkVolatility = benchmark && benchmark.averageVolatility !== null ? benchmark.averageVolatility : null;
@@ -370,23 +369,6 @@ export async function fetchPortfolioSummary() {
     }))
     .sort((a, b) => a.ticker.localeCompare(b.ticker));
 }
-
-const getValue = (row, candidates) => {
-  const lowered = new Map(
-    Object.entries(row).map(([key, value]) => [key.trim().toLowerCase(), value])
-  );
-  for (const candidate of candidates) {
-    const direct = row[candidate];
-    if (direct !== undefined) {
-      return direct;
-    }
-    const normalized = lowered.get(candidate.trim().toLowerCase());
-    if (normalized !== undefined) {
-      return normalized;
-    }
-  }
-  return '';
-};
 
 const buildTickerVariantSet = (rawTicker) => {
   const variants = new Set();
@@ -406,50 +388,50 @@ const buildTickerVariantSet = (rawTicker) => {
   return variants;
 };
 
-const buildTickerCatalogueFromRows = (rows) => {
+const buildTickerCatalogueFromSnapshot = (entries) => {
   const seen = new Map();
 
-  rows.forEach((row) => {
-    const rawTicker = getValue(row, ['Ticker']);
-    const companyName = getValue(row, ['Company Name']) || '';
-    const variants = buildTickerVariantSet(rawTicker);
+  entries.forEach((entry) => {
+    const baseTicker = (entry?.ticker || '').trim().toUpperCase();
+    if (!baseTicker) {
+      return;
+    }
+    const canonical = normaliseInputTicker(baseTicker);
+    if (!canonical) {
+      return;
+    }
+    const variants = buildTickerVariantSet(baseTicker);
     if (!variants.size) {
       return;
     }
 
-    const canonical = normaliseInputTicker(rawTicker);
-    if (!canonical) {
-      return;
-    }
-
-     const rawMarketCap = getValue(row, ['Market Cap', 'market cap', 'market_cap', 'marketCap']);
-     const marketCapValue = parseMarketCap(rawMarketCap);
-     const marketCapDisplay = formatMarketCapDisplay(rawMarketCap, marketCapValue);
-
     if (!seen.has(canonical)) {
       seen.set(canonical, {
         ticker: canonical,
-        displayTicker: `${canonical}.SI`,
-        companyName,
-        variants: new Set(),
-        marketCap: marketCapValue,
-        marketCapDisplay,
+        displayTicker: baseTicker.includes('.') ? baseTicker : `${canonical}.SI`,
+        companyName: entry?.companyName || '',
+        variants: new Set(variants),
+        marketCap: Number.isFinite(entry?.marketCap) ? entry.marketCap : null,
+        marketCapDisplay: entry?.marketCapDisplay || '',
       });
+      return;
     }
 
-    const entry = seen.get(canonical);
-    if (companyName && !entry.companyName) {
-      entry.companyName = companyName;
+    const existing = seen.get(canonical);
+
+    variants.forEach((variant) => existing.variants.add(variant));
+
+    if (entry?.companyName && !existing.companyName) {
+      existing.companyName = entry.companyName;
     }
 
-    if (Number.isFinite(marketCapValue)) {
-      if (!Number.isFinite(entry.marketCap) || marketCapValue > entry.marketCap) {
-        entry.marketCap = marketCapValue;
-        entry.marketCapDisplay = marketCapDisplay;
-      }
+    if (
+      Number.isFinite(entry?.marketCap) &&
+      (!Number.isFinite(existing.marketCap) || entry.marketCap > existing.marketCap)
+    ) {
+      existing.marketCap = entry.marketCap;
+      existing.marketCapDisplay = entry?.marketCapDisplay || existing.marketCapDisplay;
     }
-
-    variants.forEach((variant) => entry.variants.add(variant));
   });
 
   return Array.from(seen.values())
@@ -461,14 +443,7 @@ const buildTickerCatalogueFromRows = (rows) => {
       marketCap: Number.isFinite(entry.marketCap) ? entry.marketCap : null,
       marketCapDisplay: entry.marketCapDisplay || '',
     }))
-    .sort((a, b) => {
-      const capA = Number.isFinite(a.marketCap) ? a.marketCap : -Infinity;
-      const capB = Number.isFinite(b.marketCap) ? b.marketCap : -Infinity;
-      if (capA !== capB) {
-        return capB - capA;
-      }
-      return a.ticker.localeCompare(b.ticker);
-    });
+    .sort((a, b) => a.ticker.localeCompare(b.ticker));
 };
 
 let tickerCatalogueCache = null;
@@ -513,19 +488,13 @@ export async function fetchTickerCatalogue({ forceRefresh = false } = {}) {
     return tickerCatalogueCache.slice();
   }
 
-  let parsedRows;
   try {
-    parsedRows = await loadDashboardRows();
-  } catch (err) {
-    console.warn('Falling back to yahoo_stock_data dataset for ticker list:', err);
-    try {
-      parsedRows = await loadPrimaryRows();
-    } catch (fallbackError) {
-      console.error('Unable to load fallback ticker dataset.', fallbackError);
-    }
-  }
-
-  if (!parsedRows?.length) {
+    const snapshot = await loadSnapshot({ forceRefresh });
+    tickerCatalogueCache = buildTickerCatalogueFromSnapshot(snapshot.tickers || []);
+    writeStoredTickerCatalogue(tickerCatalogueCache);
+    return tickerCatalogueCache.slice();
+  } catch (error) {
+    console.warn('Unable to load snapshot for ticker catalogue.', error);
     const stored = readStoredTickerCatalogue();
     if (stored?.catalogue?.length) {
       tickerCatalogueCache = stored.catalogue;
@@ -534,147 +503,100 @@ export async function fetchTickerCatalogue({ forceRefresh = false } = {}) {
     tickerCatalogueCache = [];
     return [];
   }
-
-  tickerCatalogueCache = buildTickerCatalogueFromRows(parsedRows);
-  writeStoredTickerCatalogue(tickerCatalogueCache);
-  return tickerCatalogueCache.slice();
 }
 
 export async function fetchUpcomingDividends({ lookaheadDays = 30 } = {}) {
-  let parsedRows;
-  try {
-    parsedRows = await loadDashboardRows();
-  } catch (err) {
-    console.warn('Falling back to yahoo_stock_data dataset for dashboard data:', err);
-    parsedRows = await loadPrimaryRows();
-  }
-
-  if (!parsedRows?.length) {
-    return [];
-  }
+  const snapshot = await loadSnapshot();
 
   const today = new Date();
   const horizon = new Date(today);
   horizon.setDate(horizon.getDate() + lookaheadDays);
 
-  const byTicker = new Map();
+  const results = (snapshot.tickers || [])
+    .map((entry) => {
+      const upcoming = entry.upcoming;
+      if (!upcoming || !upcoming.exDate) {
+        return null;
+      }
+      const upcomingDate = new Date(upcoming.exDate);
+      if (Number.isNaN(upcomingDate.getTime())) {
+        return null;
+      }
+      if (upcomingDate < today || upcomingDate > horizon) {
+        return null;
+      }
+      return {
+        ticker: entry.ticker,
+        companyName: upcoming.companyName || entry.companyName || '',
+        exDate: upcoming.exDate,
+        dividendAmount: upcoming.amountValue,
+        dividendAmountLabel:
+          upcoming.amountLabel ||
+          (Number.isFinite(upcoming.amountValue) ? upcoming.amountValue.toFixed(4) : null),
+        dividendPayDate: upcoming.payDate || null,
+        yieldPercentage: upcoming.yieldValue,
+        yieldLabel:
+          upcoming.yieldLabel ||
+          (Number.isFinite(upcoming.yieldValue) ? `${upcoming.yieldValue.toFixed(2)}%` : null),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => itemDateCompare(new Date(a.exDate), new Date(b.exDate)));
 
-  parsedRows.forEach((row) => {
-    const rawTicker = (row?.Ticker || '').trim();
-    if (!rawTicker) {
-      return;
-    }
-    const ticker = rawTicker.toUpperCase();
-    const companyName = getValue(row, ['Company Name']) || '';
-
-    const upcomingDateStr = (getValue(row, ['Upcoming Dividend Ex Date', 'Upcoming Ex-Date']) || '').trim();
-    if (!upcomingDateStr) {
-      return;
-    }
-    const upcomingDate = new Date(upcomingDateStr);
-    if (Number.isNaN(upcomingDate.getTime())) {
-      return;
-    }
-
-    const payDateLabel = (getValue(row, ['dividend payment date', 'Upcoming Dividend Pay Date']) || '').trim();
-    const yieldLabel = (getValue(row, ['dividend yield', 'Upcoming Dividend Yield']) || '').trim();
-    const amountLabel = (getValue(row, ['dividend amount', 'Upcoming Dividend Amount']) || '').trim();
-    const yieldValue = parsePercentageValue(yieldLabel);
-    const amountValue = parseAmountValue(amountLabel);
-
-    const existing = byTicker.get(ticker);
-    if (!existing || upcomingDate < existing.exDate) {
-      byTicker.set(ticker, {
-        ticker,
-        companyName,
-        exDate: upcomingDate,
-        exDateLabel: upcomingDateStr,
-        payDateLabel,
-        yieldLabel: yieldLabel || null,
-        yieldValue,
-        amountLabel: amountLabel || null,
-        amountValue,
-      });
-    }
-  });
-
-  const filtered = Array.from(byTicker.values())
-    .filter((item) => item.exDate >= today && item.exDate <= horizon)
-    .sort((a, b) => itemDateCompare(a.exDate, b.exDate));
-
-  return filtered.map((item) => ({
-    ticker: item.ticker,
-    companyName: item.companyName,
-    exDate: item.exDateLabel || item.exDate.toISOString().split('T')[0],
-    dividendAmount: item.amountValue,
-    dividendAmountLabel: item.amountLabel,
-    dividendPayDate: item.payDateLabel || null,
-    yieldPercentage: item.yieldValue,
-    yieldLabel: item.yieldLabel,
-  }));
+  return results;
 }
 
 export const fetchDashboardTickers = fetchTickerCatalogue;
 
-const findLatestDividendRow = (rows) => {
-  let latestRow = null;
-  let latestDate = null;
-
-  rows.forEach((row) => {
-    const dateStr = (row['Ex-Dividend Date'] || '').trim();
-    if (!dateStr) {
-      return;
-    }
-    const date = new Date(dateStr);
-    if (Number.isNaN(date.getTime())) {
-      return;
-    }
-    if (!latestDate || date > latestDate) {
-      latestDate = date;
-      latestRow = row;
-    }
-  });
-
-  return { latestRow, latestDate };
-};
-
 export async function fetchLatestDividendSnapshot(ticker) {
-  const parsedRows = await loadPrimaryRows();
-
-  if (!parsedRows?.length) {
-    throw new Error('Dividend dataset is not available.');
-  }
-
+  const snapshot = await loadSnapshot();
   const normalisedTicker = normaliseInputTicker(ticker);
   if (!normalisedTicker) {
     throw new Error('Please provide a valid ticker symbol.');
   }
 
-  const matchingRows = parsedRows.filter(
-    (row) => (row?.Ticker || '').trim().toUpperCase() === normalisedTicker
-  );
-
-  if (!matchingRows.length) {
+  const tickerEntry = snapshot.tickerMap.get(normalisedTicker);
+  if (!tickerEntry) {
     throw new Error('The selected ticker does not have dividend records in the offline dataset.');
   }
 
-  const { latestRow, latestDate } = findLatestDividendRow(matchingRows);
-  if (!latestRow || !latestDate) {
+  const events = tickerEntry.events || [];
+  if (!events.length) {
     throw new Error('No dividend history is available for the selected ticker.');
   }
 
-  const amountRaw = latestRow['Dividend Amount'];
-  const amountValue = parseAmountValue(amountRaw);
-  const priceValue = parsePrice(latestRow['Ex-Date Price']);
+  const latestEvent = events.reduce((latest, current) => {
+    const latestDate = latest ? new Date(latest.exDate) : null;
+    const currentDate = current ? new Date(current.exDate) : null;
+    if (!latestDate || Number.isNaN(latestDate.getTime())) {
+      return current;
+    }
+    if (!currentDate || Number.isNaN(currentDate.getTime())) {
+      return latest;
+    }
+    return currentDate > latestDate ? current : latest;
+  }, events[0]);
+
+  if (!latestEvent) {
+    throw new Error('No dividend history is available for the selected ticker.');
+  }
+
+  const amountValue = Number.isFinite(latestEvent.dividendAmount) ? latestEvent.dividendAmount : null;
+  const priceValue = Number.isFinite(latestEvent.exDatePrice) ? latestEvent.exDatePrice : null;
 
   return {
     ticker: normalisedTicker,
-    companyName: latestRow['Company Name'] || '',
-    lastExDate: latestDate.toISOString().split('T')[0],
+    companyName: tickerEntry.companyName || '',
+    lastExDate: latestEvent.exDate,
     dividendAmount: amountValue !== null ? amountValue : null,
     dividendAmountLabel:
-      amountValue !== null ? amountValue.toFixed(4) : (amountRaw !== undefined ? String(amountRaw).trim() : ''),
+      amountValue !== null
+        ? amountValue.toFixed(4)
+        : (latestEvent.dividendAmountLabel !== undefined ? String(latestEvent.dividendAmountLabel).trim() : ''),
     exDatePrice: priceValue !== null ? priceValue : null,
-    exDatePriceLabel: priceValue !== null ? priceValue.toFixed(4) : '',
+    exDatePriceLabel:
+      priceValue !== null
+        ? priceValue.toFixed(4)
+        : (latestEvent.exDatePriceLabel !== undefined ? String(latestEvent.exDatePriceLabel).trim() : ''),
   };
 }

@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib import error, parse, request
 
+from scripts.build_snapshot import OUTPUT_JSON_PATH, build_snapshot
+
 
 OVERRIDE_UPCOMING_INFO: Dict[str, Dict[str, str]] = {
     "1F2": {"date": "2025-10-14", "yield": "1.23%", "amount": "SGD 0.005"},
@@ -27,24 +29,24 @@ OVERRIDE_UPCOMING_INFO: Dict[str, Dict[str, str]] = {
     "S68.SI": {"date": "2025-10-16", "yield": "0.60%", "amount": "SGD 0.105"},
     "D07": {"date": "2025-10-16", "yield": "0.00%", "amount": "0.000"},
     "D07.SI": {"date": "2025-10-16", "yield": "0.00%", "amount": "0.000"},
-    "BEC": {"date": "2025-10-22", "yield": "1.41%", "amount": "SGD 0.060"},
-    "BEC.SI": {"date": "2025-10-22", "yield": "1.41%", "amount": "SGD 0.060"},
-    "NEX": {"date": "2025-10-22", "yield": "1.24%", "amount": "SGD 0.005"},
-    "NEX.SI": {"date": "2025-10-22", "yield": "1.24%", "amount": "SGD 0.005"},
-    "CHJ": {"date": "2025-10-23", "yield": "1.18%", "amount": "SGD 0.010"},
-    "CHJ.SI": {"date": "2025-10-23", "yield": "1.18%", "amount": "SGD 0.010"},
-    "T12": {"date": "2025-10-30", "yield": "1.16%", "amount": "SGD 0.010"},
-    "T12.SI": {"date": "2025-10-30", "yield": "1.16%", "amount": "SGD 0.010"},
-    "W05": {"date": "2025-10-30", "yield": "2.08%", "amount": "SGD 0.030"},
-    "W05.SI": {"date": "2025-10-30", "yield": "2.08%", "amount": "SGD 0.030"},
-    "LCC": {"date": "2025-10-30", "yield": "4.23%", "amount": "SGD 0.022"},
-    "LCC.SI": {"date": "2025-10-30", "yield": "4.23%", "amount": "SGD 0.022"},
-    "MIJ": {"date": "2025-10-31", "yield": "0.77%", "amount": "SGD 0.001"},
-    "MIJ.SI": {"date": "2025-10-31", "yield": "0.77%", "amount": "SGD 0.001"},
-    "1B1": {"date": "2025-10-31", "yield": "3.33%", "amount": "SGD 0.012"},
-    "1B1.SI": {"date": "2025-10-31", "yield": "3.33%", "amount": "SGD 0.012"},
-    "C33": {"date": "2025-10-31", "yield": "3.26%", "amount": "SGD 0.007"},
-    "C33.SI": {"date": "2025-10-31", "yield": "3.26%", "amount": "SGD 0.007"},
+    "BEC": {"date": "2025-10-22", "payDate": "2025-11-14", "yield": "1.41%", "amount": "SGD 0.060"},
+    "BEC.SI": {"date": "2025-10-22", "payDate": "2025-11-14", "yield": "1.41%", "amount": "SGD 0.060"},
+    "NEX": {"date": "2025-10-22", "payDate": "2025-10-30", "yield": "1.24%", "amount": "SGD 0.005"},
+    "NEX.SI": {"date": "2025-10-22", "payDate": "2025-10-30", "yield": "1.24%", "amount": "SGD 0.005"},
+    "CHJ": {"date": "2025-10-23", "payDate": "2025-11-07", "yield": "1.18%", "amount": "SGD 0.010"},
+    "CHJ.SI": {"date": "2025-10-23", "payDate": "2025-11-07", "yield": "1.18%", "amount": "SGD 0.010"},
+    "T12": {"date": "2025-10-30", "payDate": "2025-11-12", "yield": "1.16%", "amount": "SGD 0.010"},
+    "T12.SI": {"date": "2025-10-30", "payDate": "2025-11-12", "yield": "1.16%", "amount": "SGD 0.010"},
+    "W05": {"date": "2025-10-30", "payDate": "2025-11-17", "yield": "2.08%", "amount": "SGD 0.030"},
+    "W05.SI": {"date": "2025-10-30", "payDate": "2025-11-17", "yield": "2.08%", "amount": "SGD 0.030"},
+    "LCC": {"date": "2025-10-30", "payDate": "2025-11-14", "yield": "4.23%", "amount": "SGD 0.022"},
+    "LCC.SI": {"date": "2025-10-30", "payDate": "2025-11-14", "yield": "4.23%", "amount": "SGD 0.022"},
+    "MIJ": {"date": "2025-10-31", "payDate": "2025-11-14", "yield": "0.77%", "amount": "SGD 0.001"},
+    "MIJ.SI": {"date": "2025-10-31", "payDate": "2025-11-14", "yield": "0.77%", "amount": "SGD 0.001"},
+    "1B1": {"date": "2025-10-31", "payDate": "2025-11-13", "yield": "3.33%", "amount": "SGD 0.012"},
+    "1B1.SI": {"date": "2025-10-31", "payDate": "2025-11-13", "yield": "3.33%", "amount": "SGD 0.012"},
+    "C33": {"date": "2025-10-31", "payDate": "2025-11-13", "yield": "3.26%", "amount": "SGD 0.007"},
+    "C33.SI": {"date": "2025-10-31", "payDate": "2025-11-13", "yield": "3.26%", "amount": "SGD 0.007"},
     "O08": {"date": "2025-10-31", "yield": "4.10%", "amount": "SGD 0.007"},
     "O08.SI": {"date": "2025-10-31", "yield": "4.10%", "amount": "SGD 0.007"},
     "F17": {"date": "2025-11-04", "yield": "3.42%", "amount": "SGD 0.070"},
@@ -121,6 +123,12 @@ TICKERS: Tuple[str, ...] = (
     "O08",
     "C52",
     "F17",
+    "BEC",
+    "NEX",
+    "CHJ",
+    "T12",
+    "W05",
+    "MIJ",
 )
 OUTPUT_PATH = Path(__file__).resolve().parent / "public" / "yahoo_stock_data.csv"
 DASHBOARD_PATH = Path(__file__).resolve().parent / "public" / "dashboard_data.csv"
@@ -647,6 +655,12 @@ def main() -> None:
     ticker_data = gather_ticker_data(TICKERS)
     write_csv(ticker_data)
     write_dashboard_csv(ticker_data)
+    snapshot = build_snapshot()
+    OUTPUT_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with OUTPUT_JSON_PATH.open("w", encoding="utf-8") as handle:
+        json.dump(snapshot, handle, indent=2, sort_keys=False)
+        handle.write("\n")
+    print(f"Wrote consolidated snapshot to {OUTPUT_JSON_PATH}")
 
 
 if __name__ == "__main__":

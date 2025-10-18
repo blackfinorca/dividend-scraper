@@ -3,6 +3,7 @@ import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
 import Icon from '../../../components/AppIcon';
 import TickerAutocomplete from './TickerAutocomplete';
+import { cn } from '../../../utils/cn';
 
 const DEFAULT_START_DATE = '2020-01-01';
 const getTodayIso = () => {
@@ -20,7 +21,9 @@ const ControlPanel = ({
   className = "",
   tickerOptions = [],
   tickerOptionsLoading = false,
-  tickerOptionsError = ''
+  tickerOptionsError = '',
+  initialTicker = '',
+  highlightFetchButton = false,
 }) => {
   const todayIso = getTodayIso();
   const [formData, setFormData] = useState({
@@ -29,6 +32,7 @@ const ControlPanel = ({
     startDate: DEFAULT_START_DATE,
     endDate: todayIso
   });
+  const [errors, setErrors] = useState({});
 
   useEffect(() => {
     setFormData((prev) => {
@@ -42,7 +46,25 @@ const ControlPanel = ({
     });
   }, [todayIso]);
 
-  const [errors, setErrors] = useState({});
+  useEffect(() => {
+    const normalized = (initialTicker || '').trim().toUpperCase();
+    if (!normalized) {
+      return;
+    }
+    setFormData((prev) => {
+      if (prev.ticker === normalized) {
+        return prev;
+      }
+      return {
+        ...prev,
+        ticker: normalized,
+      };
+    });
+    setErrors((prev) => ({
+      ...prev,
+      ticker: '',
+    }));
+  }, [initialTicker]);
 
   const validateForm = () => {
     const newErrors = {};
@@ -214,6 +236,9 @@ const ControlPanel = ({
               iconPosition="left"
               iconSize={16}
               disabled={!formData?.ticker || !formData?.marginAmount || tickerOptionsLoading}
+              className={cn(
+                highlightFetchButton && !loading && 'animate-pulse ring-2 ring-primary/40 ring-offset-2 shadow-lg'
+              )}
             >
               Fetch & Calculate
             </Button>

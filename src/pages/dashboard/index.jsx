@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import ApplicationHeader from '../../components/ui/ApplicationHeader';
 import StatusBanner from '../../components/ui/StatusBanner';
 import Input from '../../components/ui/Input';
@@ -8,6 +9,7 @@ import {
   fetchTickerCatalogue,
   fetchLatestDividendSnapshot,
 } from '../../utils/dividendDataApi';
+import Button from '../../components/ui/Button';
 
 const formatCurrency = (value) => {
   if (value === null || Number.isNaN(value)) {
@@ -36,6 +38,7 @@ const Dashboard = () => {
   const [snapshot, setSnapshot] = useState(null);
   const [shareCountInput, setShareCountInput] = useState('');
   const [marginAmountInput, setMarginAmountInput] = useState('');
+  const navigate = useNavigate();
 
   const tickerVariantLookup = useMemo(() => {
     const map = new Map();
@@ -68,13 +71,10 @@ const Dashboard = () => {
 
   const { lookaheadDays, horizonLabel } = useMemo(() => {
     const now = new Date();
-    let yearEnd = new Date(now.getFullYear(), 11, 31);
-    if (yearEnd < now) {
-      yearEnd = new Date(now.getFullYear() + 1, 11, 31);
-    }
-    const diffMs = yearEnd.getTime() - now.getTime();
+    const horizonEnd = new Date(now.getFullYear() + 1, 11, 31); // cover the entire next calendar year
+    const diffMs = horizonEnd.getTime() - now.getTime();
     const diffDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
-    const label = yearEnd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const label = horizonEnd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     return { lookaheadDays: diffDays, horizonLabel: label };
   }, []);
 
@@ -172,14 +172,49 @@ const Dashboard = () => {
     };
   }, [selectedTicker]);
 
-  const nextDividendDate = useMemo(() => {
-    if (!upcomingDividends.length) {
-      return null;
+  const sortedUpcomingDividends = useMemo(() => {
+    if (!upcomingDividends?.length) {
+      return [];
     }
-    return upcomingDividends[0].exDate;
+    return upcomingDividends.slice().sort((a, b) => {
+      const aDate = new Date(a.exDate);
+      const bDate = new Date(b.exDate);
+      return aDate.getTime() - bDate.getTime();
+    });
   }, [upcomingDividends]);
 
-  const totalUpcoming = upcomingDividends.length;
+  const nextDividendDate = useMemo(() => {
+    if (!sortedUpcomingDividends.length) {
+      return null;
+    }
+    return sortedUpcomingDividends[0].exDate;
+  }, [sortedUpcomingDividends]);
+
+  const totalUpcoming = sortedUpcomingDividends.length;
+
+  const isWithinSevenDays = useCallback((dateLike) => {
+    if (!dateLike) {
+      return false;
+    }
+    const target = new Date(dateLike);
+    if (Number.isNaN(target.getTime())) {
+      return false;
+    }
+    const today = new Date();
+    const diffMs = target.getTime() - today.getTime();
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+    return diffDays >= 0 && diffDays < 7;
+  }, []);
+
+  const handleAnalyzeTicker = useCallback(
+    (ticker) => {
+      if (!ticker) {
+        return;
+      }
+      navigate(`/dividend-capture-analyzer?ticker=${encodeURIComponent(ticker)}`);
+    },
+    [navigate]
+  );
 
   const tickerNameLookup = useMemo(() => {
     const map = new Map();
@@ -314,27 +349,47 @@ const Dashboard = () => {
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ex-Date</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dividend Yield</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dividend Amount</th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {loading ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">Loading upcoming dividends...</td>
+                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">Loading upcoming dividends...</td>
                     </tr>
-                  ) : upcomingDividends.length === 0 ? (
+                  ) : sortedUpcomingDividends.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">No upcoming ex-dividend dates scheduled through {horizonLabel}.</td>
+                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">No upcoming ex-dividend dates scheduled through {horizonLabel}.</td>
                     </tr>
                   ) : (
-                    upcomingDividends.map((item) => (
-                      <tr key={`${item.ticker}-${item.exDate}`} className="hover:bg-accent/40 transition-colors">
-                        <td className="px-4 py-3 text-sm font-medium text-foreground">{item.ticker}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{item.companyName || '—'}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{new Date(item.exDate).toLocaleDateString('en-GB')}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{item.yieldLabel ?? formatPercentage(item.yieldPercentage)}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{item.dividendAmountLabel ?? formatCurrency(item.dividendAmount)}</td>
-                      </tr>
-                    ))
+                    sortedUpcomingDividends.map((item) => {
+                      const highlight = isWithinSevenDays(item.exDate);
+                      return (
+                        <tr
+                          key={`${item.ticker}-${item.exDate}`}
+                          className={`transition-colors ${highlight ? 'bg-muted/20 hover:bg-muted/30' : 'hover:bg-accent/40'}`}
+                        >
+                          <td className="px-4 py-3 text-sm font-medium text-foreground">{item.ticker}</td>
+                          <td className="px-4 py-3 text-sm text-foreground">{item.companyName || '—'}</td>
+                          <td className={`px-4 py-3 text-sm ${highlight ? 'text-foreground font-semibold' : 'text-foreground'}`}>
+                            {new Date(item.exDate).toLocaleDateString('en-GB')}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-foreground">{item.yieldLabel ?? formatPercentage(item.yieldPercentage)}</td>
+                          <td className="px-4 py-3 text-sm text-foreground">{item.dividendAmountLabel ?? formatCurrency(item.dividendAmount)}</td>
+                          <td className="px-4 py-3 text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            iconName="BarChart2"
+                            iconSize={14}
+                            onClick={() => handleAnalyzeTicker(item.ticker)}
+                          >
+                            Analyze
+                          </Button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
