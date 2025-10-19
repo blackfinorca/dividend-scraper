@@ -221,23 +221,49 @@ const DividendCaptureAnalyzer = () => {
     return totals;
   }, { totalTradeFee: 0, totalMarginFee: 0, totalResult: 0 });
 
+  const rowsLoaded = gridData?.length ?? 0;
+
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white flex flex-col">
       <ApplicationHeader
         theme={theme}
         onThemeToggle={handleThemeToggle}
+        className="bg-white/70 dark:bg-slate-900/80 backdrop-blur-md border-b border-white/60 dark:border-slate-700/70 shadow-sm"
       />
       <main className="flex-1 pt-16">
-        <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
           {/* Page Header */}
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold text-foreground mb-2">
-              Dividend Capture Analyzer
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Analyze historical dividend-capture trading opportunities for Singapore-listed stocks with comprehensive P&L calculations.
-            </p>
-          </div>
+          <header className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-lg p-6">
+            <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-2">
+                <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-blue-600 via-emerald-500 to-blue-400 text-transparent bg-clip-text font-['Poppins',sans-serif]">
+                  Dividend Capture Analyzer
+                </h1>
+                <p className="text-sm text-slate-600 dark:text-slate-300 max-w-2xl">
+                  Explore historical ex-dividend windows, compare capture strategies, and size entries using SGX-specific margin math.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4">
+                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Events Loaded</span>
+                  <div className="mt-1 text-2xl font-semibold text-slate-900 dark:text-white font-mono">{rowsLoaded}</div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">Latest query</span>
+                </div>
+                <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4">
+                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Selections</span>
+                  <div className="mt-1 text-2xl font-semibold text-emerald-500 font-mono">{selectedCount}</div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">Buy/Sell markers</span>
+                </div>
+                <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4">
+                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Margin Amount</span>
+                  <div className="mt-1 text-2xl font-semibold text-slate-900 dark:text-white font-mono">
+                    {currentParams?.marginAmount ? `S$ ${parseFloat(currentParams.marginAmount).toLocaleString('en-SG')}` : '—'}
+                  </div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">Adjust in controls</span>
+                </div>
+              </div>
+            </div>
+          </header>
 
           {/* Status Banner */}
           {statusMessage && (
@@ -246,7 +272,7 @@ const DividendCaptureAnalyzer = () => {
               type={statusType}
               onDismiss={handleStatusDismiss}
               autoHide={statusType === 'success'}
-              className="mb-6"
+              className="bg-white/80 dark:bg-slate-800/80 border border-white/80 dark:border-slate-700/80 rounded-2xl"
             />
           )}
 
@@ -260,18 +286,16 @@ const DividendCaptureAnalyzer = () => {
             tickerOptionsError={tickerOptionsError}
             initialTicker={initialTicker}
             highlightFetchButton={highlightFetchButton}
-            className="mb-6"
           />
 
           {/* Summary Strip */}
-          {gridData?.length > 0 && (
+          {rowsLoaded > 0 && (
             <SummaryStrip
-              rowsLoaded={gridData?.length}
+              rowsLoaded={rowsLoaded}
               selectedCount={selectedCount}
               totalTradeFee={aggregates.totalTradeFee}
               totalMarginFee={aggregates.totalMarginFee}
               totalResult={aggregates.totalResult}
-              className="mb-6"
             />
           )}
 
@@ -281,7 +305,7 @@ const DividendCaptureAnalyzer = () => {
             marginAmount={currentParams?.marginAmount ? parseFloat(currentParams?.marginAmount) : 50000}
             onCellSelect={handleCellSelect}
             selectedCells={selectedCells}
-            className={isGridFullScreen ? '' : 'mb-6'}
+            className={isGridFullScreen ? '' : 'mt-6'}
             fullScreen={isGridFullScreen}
             onToggleFullScreen={() => setIsGridFullScreen((prev) => !prev)}
           />

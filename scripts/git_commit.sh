@@ -9,12 +9,7 @@ if [[ $# -lt 1 ]]; then
   exit 1
 fi
 
-COMMIT_MESSAGE=$1
-SHIFT_COUNT=1
-
-while [[ ${SHIFT_COUNT} -lt $# ]]; do
-  shift
-done
+COMMIT_MESSAGE="$1"
 
 PROJECT_ROOT=$(
   cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1
@@ -24,12 +19,12 @@ PROJECT_ROOT=$(
 cd "${PROJECT_ROOT}"
 
 if ! command -v git >/dev/null 2>&1; then
-  echo "Error: git command not found on PATH."
+  echo "Error: git is not installed."
   exit 1
 fi
 
 if [[ ! -d .git ]]; then
-  echo "Error: no .git directory found in ${PROJECT_ROOT}"
+  echo "Error: .git directory not found in project root."
   exit 1
 fi
 
@@ -37,12 +32,11 @@ echo "Staging tracked changes..."
 git add --all
 
 if git diff --cached --quiet; then
-  echo "No staged changes detected. Commit aborted."
+  echo "No staged changes to commit."
   exit 0
 fi
 
-echo "Creating commit with message: ${COMMIT_MESSAGE}"
+echo "Creating commit..."
 git commit -m "${COMMIT_MESSAGE}"
 
-echo "Commit created successfully. Push it with:"
-echo "  git push"
+echo "Commit created. Push with: git push"

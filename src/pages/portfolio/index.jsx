@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import ApplicationHeader from '../../components/ui/ApplicationHeader';
 import StatusBanner from '../../components/ui/StatusBanner';
 import Input from '../../components/ui/Input';
@@ -53,6 +54,7 @@ const Portfolio = () => {
   const [portfolioRows, setPortfolioRows] = useState([]);
   const [yieldThreshold, setYieldThreshold] = useState('');
   const [sortConfig, setSortConfig] = useState({ column: 'marketCap', direction: 'desc' });
+  const navigate = useNavigate();
 
   const handleThemeToggle = useCallback(() => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
@@ -170,56 +172,99 @@ const Portfolio = () => {
     return rows;
   }, [portfolioRows, searchTerm, yieldThreshold, sortConfig]);
 
-  const handleSort = useCallback((column) => {
+  const sortOptions = useMemo(() => [
+    { value: 'marketCap', label: 'Market Cap' },
+    { value: 'averageYield', label: 'Average Yield' },
+    { value: 'averageDividend', label: 'Average Dividend' },
+    { value: 'volatilityIndex', label: 'Volatility Index' },
+    { value: 'events', label: 'Events Tracked' },
+    { value: 'latestExDate', label: 'Latest Ex-Date' },
+    { value: 'ticker', label: 'Ticker' },
+    { value: 'companyName', label: 'Company Name' },
+  ], []);
+
+  const handleSortColumnChange = useCallback((event) => {
+    const column = event.target.value;
     setSortConfig((prev) => {
       if (prev.column === column) {
-        return { column, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+        return prev;
       }
-      return { column, direction: column === 'marketCap' ? 'desc' : 'asc' };
+      return {
+        column,
+        direction: column === 'marketCap' ? 'desc' : 'asc',
+      };
     });
   }, []);
 
-  const getSortIndicator = useCallback((column) => {
-    if (sortConfig.column !== column) {
-      return '↕';
-    }
-    return sortConfig.direction === 'asc' ? '↑' : '↓';
-  }, [sortConfig]);
+  const toggleSortDirection = useCallback(() => {
+    setSortConfig((prev) => ({
+      column: prev.column,
+      direction: prev.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  }, []);
+
+  const filteredCount = filteredRows.length;
+  const totalTickers = portfolioRows.length;
+  const selectedSortOption = sortOptions.find((option) => option.value === sortConfig.column) || sortOptions[0];
+  const isSortDesc = sortConfig.direction === 'desc';
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <ApplicationHeader theme={theme} onThemeToggle={handleThemeToggle} />
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white flex flex-col">
+      <ApplicationHeader theme={theme} onThemeToggle={handleThemeToggle} className="bg-white/70 dark:bg-slate-900/80 backdrop-blur-md border-b border-white/60 dark:border-slate-700/70 shadow-sm" />
       <main className="flex-1 pt-16">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold text-foreground mb-2">Portfolio Overview</h1>
-            <p className="text-sm text-muted-foreground">
-              Summary of dividend opportunities across all tracked Singapore tickers based on the offline dataset.
-            </p>
-          </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+          <header className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-lg p-6">
+            <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-2">
+                <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-blue-600 via-emerald-500 to-blue-400 text-transparent bg-clip-text font-['Poppins',sans-serif]">
+                  Portfolio Overview
+                </h1>
+                <p className="text-sm text-slate-600 dark:text-slate-300 max-w-2xl">
+                  Compare dividend consistency, yield potential, and volatility across the tracked SGX universe.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4">
+                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Tracked Tickers</span>
+                  <div className="mt-1 text-2xl font-semibold font-mono text-slate-900 dark:text-white">{totalTickers}</div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">from offline snapshot</span>
+                </div>
+                <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4">
+                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Filtered View</span>
+                  <div className="mt-1 text-2xl font-semibold font-mono text-emerald-500">{filteredCount}</div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">matching your criteria</span>
+                </div>
+                <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4">
+                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Sort Order</span>
+                  <div className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
+                    {selectedSortOption.label}
+                  </div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">{isSortDesc ? 'Descending' : 'Ascending'}</span>
+                </div>
+              </div>
+            </div>
+          </header>
 
           {error && (
             <StatusBanner
               type="error"
               message={error}
-              className="mb-4"
+              className="bg-white/80 dark:bg-slate-800/80 border border-white/80 dark:border-slate-700/80 rounded-2xl"
             />
           )}
 
-          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="text-sm text-muted-foreground">
-              Showing {filteredRows.length} of {portfolioRows.length} tickers
-            </div>
-            <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-              <div className="w-full sm:w-72">
+          <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-lg p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="text-sm text-slate-600 dark:text-slate-300">
+                Showing <span className="font-semibold text-slate-900 dark:text-white">{filteredCount}</span> of {totalTickers} tickers
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 flex-1">
                 <Input
-                  placeholder="Search by ticker or company name"
+                  placeholder="Search by ticker or company"
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
-                  className="w-full"
+                  className="bg-white/70 dark:bg-slate-900/50 border border-white/70 dark:border-slate-700/70 focus:ring-2 focus:ring-blue-500"
                 />
-              </div>
-              <div className="w-full sm:w-48">
                 <Input
                   type="number"
                   min="0"
@@ -227,140 +272,111 @@ const Portfolio = () => {
                   placeholder="Yield more than (%)"
                   value={yieldThreshold}
                   onChange={(event) => setYieldThreshold(event.target.value)}
-                  className="w-full"
+                  className="bg-white/70 dark:bg-slate-900/50 border border-white/70 dark:border-slate-700/70 focus:ring-2 focus:ring-blue-500"
                 />
+                <div className="flex items-center gap-2">
+                  <label htmlFor="portfolio-sort" className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Sort by
+                  </label>
+                  <select
+                    id="portfolio-sort"
+                    value={selectedSortOption.value}
+                    onChange={handleSortColumnChange}
+                    className="h-10 flex-1 rounded-lg border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/50 px-3 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {sortOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleSortDirection}
+                    className="h-10 w-full rounded-lg border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/50 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-white/80 dark:hover:bg-slate-900/70 transition"
+                  >
+                    {isSortDesc ? 'Descending' : 'Ascending'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-border">
-                <thead className="bg-muted/70">
-                  <tr>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      <button
-                        type="button"
-                        onClick={() => handleSort('ticker')}
-                        className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                        aria-label="Toggle ticker sorting"
-                      >
-                        Ticker
-                        <span className="text-xs font-normal">{getSortIndicator('ticker')}</span>
-                      </button>
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      <button
-                        type="button"
-                        onClick={() => handleSort('companyName')}
-                        className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                        aria-label="Toggle company name sorting"
-                      >
-                        Company Name
-                        <span className="text-xs font-normal">{getSortIndicator('companyName')}</span>
-                      </button>
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      <button
-                        type="button"
-                        onClick={() => handleSort('marketCap')}
-                        className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                        aria-label="Toggle market cap sorting"
-                      >
-                        Market Cap
-                        <span className="text-xs font-normal">{getSortIndicator('marketCap')}</span>
-                      </button>
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      <button
-                        type="button"
-                        onClick={() => handleSort('averageYield')}
-                        className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                        aria-label="Toggle average dividend yield sorting"
-                      >
-                        Avg Dividend Yield
-                        <span className="text-xs font-normal">{getSortIndicator('averageYield')}</span>
-                      </button>
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      <button
-                        type="button"
-                        onClick={() => handleSort('volatilityIndex')}
-                        className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                        aria-label="Toggle volatility index sorting"
-                      >
-                        Volatility Index
-                        <span className="text-xs font-normal">{getSortIndicator('volatilityIndex')}</span>
-                      </button>
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      <button
-                        type="button"
-                        onClick={() => handleSort('averageDividend')}
-                        className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                        aria-label="Toggle average dividend per share sorting"
-                      >
-                        Avg Dividend/Share
-                        <span className="text-xs font-normal">{getSortIndicator('averageDividend')}</span>
-                      </button>
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      <button
-                        type="button"
-                        onClick={() => handleSort('events')}
-                        className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                        aria-label="Toggle events tracked sorting"
-                      >
-                        Events Tracked
-                        <span className="text-xs font-normal">{getSortIndicator('events')}</span>
-                      </button>
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      <button
-                        type="button"
-                        onClick={() => handleSort('latestExDate')}
-                        className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                        aria-label="Toggle most recent ex-date sorting"
-                      >
-                        Most Recent Ex-Date
-                        <span className="text-xs font-normal">{getSortIndicator('latestExDate')}</span>
-                      </button>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                        Loading portfolio data...
-                      </td>
-                    </tr>
-                  ) : filteredRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                        No tickers match your search criteria.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredRows.map((row) => (
-                      <tr key={row.ticker} className="hover:bg-accent/40 transition-colors">
-                        <td className="px-4 py-3 text-sm font-medium text-foreground">{row.ticker}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{row.companyName || '—'}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">
-                          {formatMarketCapValue(row.marketCap, row.marketCapDisplay)}
-                        </td>
-                        <td className="px-4 py-3 text-sm font-semibold text-foreground">{formatPercentage(row.averageYield)}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{formatIndex(row.volatilityIndex)}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{formatDividend(row.averageDividend)}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{row.events}</td>
-                        <td className="px-4 py-3 text-sm text-foreground">{row.latestExDate ? new Date(row.latestExDate).toLocaleDateString('en-GB') : '—'}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+          {loading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={`skeleton-${index}`} className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-lg border border-white/70 dark:border-slate-700/70 rounded-xl shadow-lg p-6 animate-pulse space-y-4">
+                  <div className="h-6 bg-slate-200/70 dark:bg-slate-700/70 rounded w-1/2"></div>
+                  <div className="h-4 bg-slate-200/70 dark:bg-slate-700/70 rounded w-3/4"></div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="h-4 bg-slate-200/70 dark:bg-slate-700/70 rounded"></div>
+                    <div className="h-4 bg-slate-200/70 dark:bg-slate-700/70 rounded"></div>
+                    <div className="h-4 bg-slate-200/70 dark:bg-slate-700/70 rounded"></div>
+                    <div className="h-4 bg-slate-200/70 dark:bg-slate-700/70 rounded"></div>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          ) : filteredCount === 0 ? (
+            <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-xl shadow-lg p-6 text-center text-sm text-slate-600 dark:text-slate-300">
+              No tickers match your search criteria.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredRows.map((row) => (
+                <div key={row.ticker} className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/90 dark:border-slate-700/90 rounded-xl shadow-lg p-6 flex flex-col gap-4 transition-all duration-200 hover:shadow-xl">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Ticker</span>
+                      <div className="mt-1 text-2xl font-mono font-semibold text-slate-900 dark:text-white">{row.ticker}</div>
+                      <div className="text-sm text-slate-600 dark:text-slate-300">{row.companyName || '—'}</div>
+                    </div>
+                    <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-600 dark:bg-blue-500/20 dark:text-blue-200">
+                      {formatMarketCapValue(row.marketCap, row.marketCapDisplay)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-sm text-slate-600 dark:text-slate-300">
+                    <div>
+                      <span className="text-xs uppercase tracking-wide">Avg Yield</span>
+                      <div className="mt-1 text-base font-semibold text-slate-900 dark:text-white">{formatPercentage(row.averageYield)}</div>
+                    </div>
+                    <div>
+                      <span className="text-xs uppercase tracking-wide">Avg Dividend</span>
+                      <div className="mt-1 text-base font-mono font-semibold text-slate-900 dark:text-white">{formatDividend(row.averageDividend)}</div>
+                    </div>
+                    <div>
+                      <span className="text-xs uppercase tracking-wide">Volatility Index</span>
+                      <div className="mt-1 text-base font-semibold text-slate-900 dark:text-white">{formatIndex(row.volatilityIndex)}</div>
+                    </div>
+                    <div>
+                      <span className="text-xs uppercase tracking-wide">Events</span>
+                      <div className="mt-1 text-base font-semibold text-slate-900 dark:text-white">{row.events}</div>
+                    </div>
+                    <div>
+                      <span className="text-xs uppercase tracking-wide">Last Ex-Date</span>
+                      <div className="mt-1 text-base font-semibold text-slate-900 dark:text-white">
+                        {row.latestExDate ? new Date(row.latestExDate).toLocaleDateString('en-GB') : '—'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between pt-2">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/dividend-capture-analyzer?ticker=${encodeURIComponent(row.ticker)}`)}
+                      className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow-md transition hover:bg-blue-700"
+                    >
+                      Analyze
+                    </button>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      Yield &gt; {yieldThreshold || '0'}? {row.averageYield !== null && yieldThreshold ? (row.averageYield > parseFloat(yieldThreshold) ? 'Yes' : 'No') : '—'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
       <ApplicationFooter />

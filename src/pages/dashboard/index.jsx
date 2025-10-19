@@ -71,8 +71,8 @@ const Dashboard = () => {
 
   const { lookaheadDays, horizonLabel } = useMemo(() => {
     const now = new Date();
-    const horizonEnd = new Date(now.getFullYear() + 1, 11, 31); // cover the entire next calendar year
-    const diffMs = horizonEnd.getTime() - now.getTime();
+    const horizonEnd = new Date(2025, 11, 31); // fixed horizon through end of 2025
+    const diffMs = Math.max(0, horizonEnd.getTime() - now.getTime());
     const diffDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
     const label = horizonEnd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     return { lookaheadDays: diffDays, horizonLabel: label };
@@ -300,128 +300,175 @@ const Dashboard = () => {
   const selectedTickerMeta = selectedTicker ? tickerCanonicalLookup.get(selectedTicker) : null;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <ApplicationHeader theme={theme} onThemeToggle={() => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'))} />
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white flex flex-col">
+      <ApplicationHeader
+        theme={theme}
+        onThemeToggle={() => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'))}
+        className="bg-white/70 dark:bg-slate-800/70 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-700/50 shadow-sm"
+      />
       <main className="flex-1 pt-16">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold text-foreground mb-2">Upcoming Dividends Dashboard</h1>
-            <div className="space-y-2 text-sm text-muted-foreground leading-relaxed">
-              <p>
-                This dashboard aggregates the latest dividend guidance for Singapore-listed counters using an offline snapshot that refreshes daily. We focus on upcoming ex-dates, previously declared cash distributions, and implied yields to help you stage capture strategies ahead of time.
-              </p>
-              <p>
-                Current coverage spans the Straits Times Index and major REITs, with fallback logic that surfaces the most recent records whenever a live feed is unavailable. Dates are normalised to the Singapore trading calendar and rounded to the nearest publishable announcement.
-              </p>
-              <p>
-                Key assumptions: instruments trade in board lots with full cash settlement, dividends are credited in the declared currency without FX haircuts, and corporate actions (e.g., splts, rights issues) are already reflected in the raw file. Any ticker not present in the dataset is treated as having no scheduled distributions in the current window.
-              </p>
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+          <header className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-lg p-6">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-blue-600 via-emerald-500 to-blue-400 text-transparent bg-clip-text font-['Poppins',sans-serif]">
+                  Upcoming Dividends Dashboard
+                </h1>
+                <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+                  Find upcoming dividends in one place and calculate capture profits using leverage.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4 text-right">
+                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Lookahead</span>
+                  <div className="mt-1 text-lg font-semibold">{horizonLabel}</div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">{lookaheadDays} days remaining</span>
+                </div>
+                <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4 text-right">
+                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Upcoming</span>
+                  <div className="mt-1 text-lg font-semibold">{loading ? '—' : totalUpcoming}</div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">tracked events</span>
+                </div>
+              </div>
             </div>
-          </div>
+          </header>
 
           {error && (
             <StatusBanner type="error" message={error} className="mb-4" />
           )}
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mb-6">
-            <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
-              <div className="text-xs uppercase text-muted-foreground tracking-wide">Upcoming Events</div>
-              <div className="text-2xl font-semibold text-foreground">{loading ? '—' : totalUpcoming}</div>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
-              <div className="text-xs uppercase text-muted-foreground tracking-wide">Next Ex-Date</div>
-              <div className="text-2xl font-semibold text-foreground">{loading ? '—' : (nextDividendDate ? new Date(nextDividendDate).toLocaleDateString('en-GB') : '—')}</div>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
-              <div className="text-xs uppercase text-muted-foreground tracking-wide">Lookahead Window</div>
-              <div className="text-2xl font-semibold text-foreground">{horizonLabel}</div>
-              <div className="text-xs text-muted-foreground mt-1">({lookaheadDays} days remaining)</div>
-            </div>
-          </div>
-
-          <div className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-border">
-                <thead className="bg-muted/70">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ticker</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Company</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ex-Date</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dividend Yield</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dividend Amount</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">Loading upcoming dividends...</td>
-                    </tr>
-                  ) : sortedUpcomingDividends.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">No upcoming ex-dividend dates scheduled through {horizonLabel}.</td>
-                    </tr>
-                  ) : (
-                    sortedUpcomingDividends.map((item) => {
-                      const highlight = isWithinSevenDays(item.exDate);
-                      return (
-                        <tr
-                          key={`${item.ticker}-${item.exDate}`}
-                          className={`transition-colors ${highlight ? 'bg-muted/20 hover:bg-muted/30' : 'hover:bg-accent/40'}`}
-                        >
-                          <td className="px-4 py-3 text-sm font-medium text-foreground">{item.ticker}</td>
-                          <td className="px-4 py-3 text-sm text-foreground">{item.companyName || '—'}</td>
-                          <td className={`px-4 py-3 text-sm ${highlight ? 'text-foreground font-semibold' : 'text-foreground'}`}>
-                            {new Date(item.exDate).toLocaleDateString('en-GB')}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-foreground">{item.yieldLabel ?? formatPercentage(item.yieldPercentage)}</td>
-                          <td className="px-4 py-3 text-sm text-foreground">{item.dividendAmountLabel ?? formatCurrency(item.dividendAmount)}</td>
-                          <td className="px-4 py-3 text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            iconName="BarChart2"
-                            iconSize={14}
-                            onClick={() => handleAnalyzeTicker(item.ticker)}
-                          >
-                            Analyze
-                          </Button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="mt-8 bg-card border border-border rounded-lg shadow-sm">
-            <div className="border-b border-border px-4 py-3">
-              <h2 className="text-lg font-semibold text-foreground">Dividend Capture Calculator</h2>
-              <div className="space-y-2 text-sm text-muted-foreground leading-relaxed">
-                <p>
-                  Use this calculator to back-test a capture play on the most recent ex-date: choose a portfolio ticker, specify the shares you would hold (or the capital you would leverage), and we infer the implied dividend payout plus price drift around the ex-window.
-                </p>
-                <p>
-                  Assumptions baked into the math: trades execute at the recorded closing prices, cash flows settle in SGD, and margin financing carries a flat six-percent annual rate with SGX-standard brokerage fees (0.127% subject to a S$4.10 minimum each way).
-                </p>
-                <p>
-                  We prioritise declared dividends over speculative guidance, treat missing price nodes as unavailable, and floor the resulting position size at zero. If you enter both shares and capital, the explicit share count wins; otherwise we compute a rounded lot size based on the ex-date price.
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-white font-['Poppins',sans-serif]">
+                  Upcoming Ex-Dividend Events
+                </h2>
+                <p className="text-sm text-slate-600 dark:text-slate-300">
+                  Sorted by ex-date; cards highlight events within 7 days so you can plan captures quickly.
                 </p>
               </div>
+              <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <span className="inline-flex h-3 w-3 rounded-full bg-slate-900/70 dark:bg-white/80" />
+                <span>Ex-date within the next week</span>
+              </div>
             </div>
-            <div className="p-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+
+            {loading ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div
+                    key={`skeleton-${index}`}
+                    className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-lg border border-white/70 dark:border-slate-700/70 rounded-xl shadow-lg p-6 animate-pulse space-y-4"
+                  >
+                    <div className="h-6 bg-slate-200/70 dark:bg-slate-700/70 rounded" />
+                    <div className="h-4 bg-slate-200/70 dark:bg-slate-700/70 rounded w-3/4" />
+                    <div className="h-4 bg-slate-200/70 dark:bg-slate-700/70 rounded w-1/2" />
+                    <div className="flex gap-3">
+                      <span className="h-8 flex-1 bg-slate-200/70 dark:bg-slate-700/70 rounded" />
+                      <span className="h-8 w-16 bg-slate-200/70 dark:bg-slate-700/70 rounded" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : sortedUpcomingDividends.length === 0 ? (
+              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-xl shadow-lg p-6 text-center text-sm text-slate-600 dark:text-slate-300">
+                No upcoming ex-dividend dates scheduled through {horizonLabel}.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {sortedUpcomingDividends.map((item) => {
+                  const highlight = isWithinSevenDays(item.exDate);
+                  return (
+                    <div
+                      key={`${item.ticker}-${item.exDate}`}
+                      className={`bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/90 dark:border-slate-700/90 rounded-xl shadow-lg p-6 transition-all duration-200 hover:shadow-xl flex flex-col gap-4 ${
+                        highlight ? 'ring-1 ring-slate-900/50 dark:ring-white/60' : ''
+                      }`}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Ticker</span>
+                          <div className="mt-1 text-2xl font-semibold font-mono text-slate-900 dark:text-white">{item.ticker}</div>
+                          <div className="text-sm text-slate-600 dark:text-slate-300">{item.companyName || '—'}</div>
+                        </div>
+                        <span className={`px-3 py-1 text-xs font-semibold rounded-full ${highlight ? 'bg-slate-900/90 text-white dark:bg-white/90 dark:text-slate-900' : 'bg-blue-50 text-blue-600 dark:bg-blue-500/20 dark:text-blue-200'}`}>
+                          {new Date(item.exDate).toLocaleDateString('en-GB')}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div className="space-y-1">
+                          <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Yield</span>
+                          <div className="text-base font-semibold text-slate-900 dark:text-white">{item.yieldLabel ?? formatPercentage(item.yieldPercentage)}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Dividend</span>
+                          <div className="text-base font-mono font-semibold text-slate-900 dark:text-white">{item.dividendAmountLabel ?? formatCurrency(item.dividendAmount)}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Pay Date</span>
+                          <div className="text-sm text-slate-700 dark:text-slate-300">{item.dividendPayDate ? new Date(item.dividendPayDate).toLocaleDateString('en-GB') : 'Pending'}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Days Away</span>
+                          <div className="text-sm text-slate-700 dark:text-slate-300">
+                            {(() => {
+                              const today = new Date();
+                              const ex = new Date(item.exDate);
+                              const diff = Math.ceil((ex.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                              return diff >= 0 ? `${diff} day${diff === 1 ? '' : 's'}` : 'Passed';
+                            })()}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between pt-2">
+                        <Button
+                          size="sm"
+                          variant="default"
+                          className="bg-blue-600 hover:bg-blue-700 text-white shadow-md"
+                          iconName="BarChart2"
+                          iconSize={14}
+                          onClick={() => handleAnalyzeTicker(item.ticker)}
+                        >
+                          Analyze
+                        </Button>
+                        <span className="text-xs text-slate-500 dark:text-slate-400">
+                          Last updated {new Date().toLocaleDateString('en-GB')}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="mt-10 bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-xl overflow-hidden">
+            <div className="px-6 py-5 border-b border-white/70 dark:border-slate-700/70 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-semibold text-slate-900 dark:text-white font-['Poppins',sans-serif]">
+                  Dividend Capture Calculator
+                </h2>
+                <p className="text-sm text-slate-600 dark:text-slate-300 max-w-2xl">
+                  Back-test ex-date capture plays: we prefill dividends and price history so you can size positions with confidence.
+                </p>
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Data refreshed {new Date().toLocaleString('en-GB')}
+              </div>
+            </div>
+
+            <div className="px-6 py-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               <div className="sm:col-span-2 lg:col-span-1">
-                <label className="text-xs font-semibold uppercase text-muted-foreground tracking-wide mb-2 block" htmlFor="ticker-search">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2 block" htmlFor="dashboard-ticker-input">
                   Ticker
                 </label>
                 <Input
-                  id="ticker-search"
+                  id="dashboard-ticker-input"
                   placeholder="Start typing (e.g. D05)"
                   value={tickerInput}
                   onChange={(event) => setTickerInput(event.target.value)}
                   list="dashboard-tickers"
+                  className="bg-white/70 dark:bg-slate-900/50 border border-white/70 dark:border-slate-700/80 focus:ring-2 focus:ring-blue-500"
                 />
                 <datalist id="dashboard-tickers">
                   {tickerOptions.map((option) => (
@@ -433,13 +480,13 @@ const Dashboard = () => {
                   ))}
                 </datalist>
                 {selectedTicker && (
-                  <div className="mt-2 text-xs text-muted-foreground">
+                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-300">
                     {selectedTickerMeta?.displayTicker ?? selectedTicker}
                     {calculatorTickerLabel ? ` — ${calculatorTickerLabel}` : ''}
                   </div>
                 )}
                 {!selectedTicker && tickerInput && (
-                  <div className="mt-2 text-xs text-destructive">
+                  <div className="mt-2 text-xs text-red-500">
                     {tickerOptions.length
                       ? 'Select a valid ticker from the catalogue.'
                       : 'Ticker catalogue not available yet.'}
@@ -447,7 +494,7 @@ const Dashboard = () => {
                 )}
               </div>
               <div>
-                <label className="text-xs font-semibold uppercase text-muted-foreground tracking-wide mb-2 block" htmlFor="share-count">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2 block" htmlFor="share-count">
                   Number of Shares
                 </label>
                 <Input
@@ -458,13 +505,14 @@ const Dashboard = () => {
                   placeholder="e.g. 1000"
                   value={shareCountInput}
                   onChange={(event) => setShareCountInput(event.target.value)}
+                  className="bg-white/70 dark:bg-slate-900/50 border border-white/70 dark:border-slate-700/80 focus:ring-2 focus:ring-blue-500"
                 />
-                <div className="mt-2 text-xs text-muted-foreground">
+                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                   Leave blank if you prefer to work with a margin amount.
                 </div>
               </div>
               <div>
-                <label className="text-xs font-semibold uppercase text-muted-foreground tracking-wide mb-2 block" htmlFor="margin-amount">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2 block" htmlFor="margin-amount">
                   Margin Amount (SGD)
                 </label>
                 <Input
@@ -475,50 +523,56 @@ const Dashboard = () => {
                   placeholder="e.g. 15000"
                   value={marginAmountInput}
                   onChange={(event) => setMarginAmountInput(event.target.value)}
+                  className="bg-white/70 dark:bg-slate-900/50 border border-white/70 dark:border-slate-700/80 focus:ring-2 focus:ring-blue-500"
                 />
-                <div className="mt-2 text-xs text-muted-foreground">
+                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                   If both fields are filled, priority is given to the share count.
                 </div>
               </div>
             </div>
-            <div className="border-t border-border px-4 py-4">
+
+            <div className="px-6 py-6 border-t border-white/70 dark:border-slate-700/70 bg-white/60 dark:bg-slate-900/40 backdrop-blur">
               {calculatorLoading ? (
-                <div className="text-sm text-muted-foreground">Loading dividend history...</div>
+                <div className="text-sm text-slate-600 dark:text-slate-300 animate-pulse">Loading dividend history...</div>
               ) : calculatorError ? (
-                <div className="text-sm text-destructive">{calculatorError}</div>
+                <div className="text-sm text-red-500">{calculatorError}</div>
               ) : !selectedTicker ? (
-                <div className="text-sm text-muted-foreground">Pick a ticker to view the latest dividend information.</div>
+                <div className="text-sm text-slate-600 dark:text-slate-300">
+                  Pick a ticker to view the latest dividend information.
+                </div>
               ) : !snapshot ? (
-                <div className="text-sm text-muted-foreground">No dividend history found for the selected ticker.</div>
+                <div className="text-sm text-slate-600 dark:text-slate-300">
+                  No dividend history found for the selected ticker.
+                </div>
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <div>
-                    <div className="text-xs uppercase text-muted-foreground tracking-wide">Last Ex-Dividend Date</div>
-                    <div className="text-base font-semibold text-foreground">
+                <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
+                    <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Last Ex-Dividend Date</div>
+                    <div className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
                       {snapshot.lastExDate ? new Date(snapshot.lastExDate).toLocaleDateString('en-GB') : '—'}
                     </div>
                   </div>
-                  <div>
-                    <div className="text-xs uppercase text-muted-foreground tracking-wide">Dividend / Share</div>
-                    <div className="text-base font-semibold text-foreground">
+                  <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
+                    <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Dividend / Share</div>
+                    <div className="mt-2 text-lg font-mono font-semibold text-slate-900 dark:text-white">
                       {snapshot.dividendAmount !== null ? formatMoney(snapshot.dividendAmount, 4) : '—'}
                     </div>
                   </div>
-                  <div>
-                    <div className="text-xs uppercase text-muted-foreground tracking-wide">Ex-Date Price</div>
-                    <div className="text-base font-semibold text-foreground">
+                  <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
+                    <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Ex-Date Price</div>
+                    <div className="mt-2 text-lg font-mono font-semibold text-slate-900 dark:text-white">
                       {snapshot.exDatePrice !== null ? formatMoney(snapshot.exDatePrice, 4) : '—'}
                     </div>
                   </div>
-                  <div>
-                    <div className="text-xs uppercase text-muted-foreground tracking-wide">Estimated Dividend</div>
-                    <div className="text-base font-semibold text-foreground">
+                  <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
+                    <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Estimated Dividend</div>
+                    <div className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
                       {calculatorResult?.totalDividend !== null
                         ? `S$ ${formatMoney(calculatorResult.totalDividend, 2)}`
                         : '—'}
                     </div>
                     {calculatorResult?.shares !== null && (
-                      <div className="text-xs text-muted-foreground mt-1">
+                      <div className="text-xs text-slate-500 dark:text-slate-300 mt-2">
                         Based on {calculatorResult.shares.toLocaleString('en-SG')} shares
                         {parsedMarginAmount !== null && snapshot.exDatePrice ? (
                           <>
@@ -529,7 +583,7 @@ const Dashboard = () => {
                       </div>
                     )}
                     {calculatorResult?.estimatedYield !== null && (
-                      <div className="text-xs text-muted-foreground mt-1">
+                      <div className="text-xs text-slate-500 dark:text-slate-300 mt-1">
                         Approx. yield on capital: {calculatorResult.estimatedYield.toFixed(2)}%
                       </div>
                     )}
@@ -537,7 +591,7 @@ const Dashboard = () => {
                 </div>
               )}
             </div>
-          </div>
+          </section>
         </div>
       </main>
       <ApplicationFooter />

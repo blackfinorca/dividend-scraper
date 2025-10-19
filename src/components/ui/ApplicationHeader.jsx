@@ -4,7 +4,7 @@ import Icon from '../AppIcon';
 import Button from './Button';
 import { cn } from '../../utils/cn';
 
-const ApplicationHeader = ({ theme = 'light', onThemeToggle }) => {
+const ApplicationHeader = ({ theme = 'light', onThemeToggle, className = '' }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
 
@@ -35,7 +35,12 @@ const ApplicationHeader = ({ theme = 'light', onThemeToggle }) => {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-100 bg-card border-b border-border">
+    <header
+      className={cn(
+        'fixed top-0 left-0 right-0 z-[100] bg-white/70 dark:bg-slate-900/80 backdrop-blur-md border-b border-white/60 dark:border-slate-700/70 shadow-sm',
+        className
+      )}
+    >
       <div className="flex items-center justify-between h-16 px-6">
         {/* Brand Section */}
         <div className="flex items-center space-x-3">
@@ -51,9 +56,6 @@ const ApplicationHeader = ({ theme = 'light', onThemeToggle }) => {
             <h1 className="text-lg font-semibold text-foreground leading-tight">
               SG Dividend Capture
             </h1>
-            <span className="text-xs text-muted-foreground font-medium">
-              Prototype
-            </span>
           </div>
         </div>
 

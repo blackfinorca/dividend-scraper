@@ -242,9 +242,9 @@ const DataGrid = ({
   return (
     <div
       className={cn(
-        'bg-card border border-border rounded-lg overflow-hidden w-full relative flex flex-col',
+        'bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-xl overflow-hidden w-full relative flex flex-col',
         fullScreen
-          ? 'fixed inset-0 z-50 m-0 rounded-none border-none shadow-2xl bg-background h-full'
+          ? 'fixed inset-0 z-50 m-0 rounded-none border-none shadow-2xl bg-slate-900 text-white h-full'
           : '',
         className
       )}
@@ -270,26 +270,26 @@ const DataGrid = ({
       <div className={cn('overflow-x-auto', fullScreen ? 'flex-1' : '')}>
         <div className="min-w-max w-full">
           {/* Header Row */}
-          <div className="sticky top-0 bg-muted border-b border-border z-10">
+          <div className="sticky top-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur border-b border-white/70 dark:border-slate-700/70 z-10">
             <div className="flex">
               {/* Fixed columns */}
-              <div className="flex bg-muted">
-                <div className="w-24 px-3 py-2 text-xs font-medium text-foreground border-r border-border">
+              <div className="flex bg-white/80 dark:bg-slate-900/80">
+                <div className="w-24 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Ex-Date
                 </div>
-                <div className="w-20 px-3 py-2 text-xs font-medium text-foreground border-r border-border">
+                <div className="w-20 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Div/Share
                 </div>
-                <div className="w-16 px-3 py-2 text-xs font-medium text-foreground border-r border-border">
+                <div className="w-16 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Qty
                 </div>
-                <div className="w-24 px-3 py-2 text-xs font-medium text-foreground border-r border-border">
+                <div className="w-24 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Trade Fee (Open&nbsp;&amp;&nbsp;Close)
                 </div>
-                <div className="w-20 px-3 py-2 text-xs font-medium text-foreground border-r border-border">
+                <div className="w-20 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Margin Fee
                 </div>
-                <div className="w-24 px-3 py-2 text-xs font-medium text-foreground border-r border-border">
+                <div className="w-24 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Total Cost
                 </div>
                 <div className="w-[120px] px-3 py-2 text-xs font-medium text-foreground border-r border-border text-center">
@@ -352,8 +352,8 @@ const DataGrid = ({
                     flex border-b border-border hover:bg-accent/50 transition-colors
                     ${hasZebraBackground
                       ? rowIndex % 2 === 0
-                        ? 'bg-background'
-                        : 'bg-muted/30'
+                        ? 'bg-white/60 dark:bg-slate-900/50'
+                        : 'bg-white/40 dark:bg-slate-900/40'
                       : ''}
                   `}
                   style={rowBackgroundStyle}
@@ -527,9 +527,9 @@ const DataGrid = ({
         </div>
       </div>
       {/* Instructions */}
-      <div className="px-4 py-3 bg-muted/50 border-t border-border">
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <div className="flex items-center space-x-4">
+      <div className="px-4 py-3 bg-white/70 dark:bg-slate-900/60 border-t border-white/70 dark:border-slate-700/70">
+        <div className="flex flex-col gap-2 text-xs text-slate-500 dark:text-slate-300 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center flex-wrap gap-4">
             <div className="flex items-center space-x-1">
               <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
               <span>Buy Date</span>
@@ -539,7 +539,7 @@ const DataGrid = ({
               <span>Sell Date</span>
             </div>
             <div className="flex items-center space-x-1">
-              <div className="w-3 h-3 bg-success/30 rounded"></div>
+              <div className="w-3 h-3 bg-emerald-500/30 rounded"></div>
               <span>Favorable Pattern</span>
             </div>
           </div>

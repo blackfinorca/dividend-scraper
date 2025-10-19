@@ -158,28 +158,31 @@ const ControlPanel = ({
   };
 
   return (
-    <div className={`bg-card border border-border rounded-lg shadow-minimal ${className}`}>
+    <div className={cn('bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-xl overflow-hidden', className)}>
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <div className="flex items-center space-x-2">
-          <Icon 
-            name="Settings" 
-            size={18} 
-            color="var(--color-primary)"
-            strokeWidth={2}
-          />
-          <h2 className="text-sm font-semibold text-foreground">
-            Analysis Parameters
-          </h2>
+      <div className="flex items-center justify-between px-5 py-4 border-b border-white/70 dark:border-slate-700/70">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-lg">
+            <Icon
+              name="Settings"
+              size={18}
+              color="currentColor"
+              strokeWidth={2}
+            />
+          </span>
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Analysis Parameters</h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Configure margin, timeframe, and ticker catalogue</p>
+          </div>
         </div>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs text-slate-500 dark:text-slate-300">
           Last updated: {new Date()?.toLocaleTimeString()}
         </div>
       </div>
       {/* Form Content */}
-      <form onSubmit={handleSubmit} className="p-4">
+      <form onSubmit={handleSubmit} className="px-5 py-5 space-y-6">
         {/* Primary Inputs Row */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <TickerAutocomplete
             value={formData?.ticker}
             onChange={(value) => handleInputChange('ticker', value)}
@@ -200,6 +203,7 @@ const ControlPanel = ({
             min="0"
             step="1000"
             required
+            className="bg-white/70 dark:bg-slate-900/50 border border-white/60 dark:border-slate-700/70 focus:ring-2 focus:ring-blue-500"
           />
 
           <Input
@@ -211,6 +215,7 @@ const ControlPanel = ({
             disabled
             readOnly
             required
+            className="bg-white/50 dark:bg-slate-900/40 border border-white/50 dark:border-slate-700/60"
           />
 
           <Input
@@ -222,11 +227,12 @@ const ControlPanel = ({
             disabled
             readOnly
             required
+            className="bg-white/50 dark:bg-slate-900/40 border border-white/50 dark:border-slate-700/60"
           />
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center justify-between pt-4 border-t border-border">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between pt-4 border-t border-white/70 dark:border-slate-700/70">
           <div className="flex items-center space-x-3">
             <Button
               type="submit"
@@ -237,7 +243,8 @@ const ControlPanel = ({
               iconSize={16}
               disabled={!formData?.ticker || !formData?.marginAmount || tickerOptionsLoading}
               className={cn(
-                highlightFetchButton && !loading && 'animate-pulse ring-2 ring-primary/40 ring-offset-2 shadow-lg'
+                'bg-blue-600 hover:bg-blue-700 text-white shadow-md',
+                highlightFetchButton && !loading && 'animate-pulse ring-2 ring-blue-500/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-800'
               )}
             >
               Fetch & Calculate
@@ -250,12 +257,13 @@ const ControlPanel = ({
               iconPosition="left"
               iconSize={16}
               disabled={loading}
+              className="border-white/70 dark:border-slate-700/70 bg-white/40 dark:bg-slate-900/40 hover:bg-white/60 dark:hover:bg-slate-900/60"
             >
               Reset
             </Button>
           </div>
 
-          <div className="flex items-center space-x-2 text-xs text-muted-foreground">
+          <div className="flex items-center space-x-2 text-xs text-slate-500 dark:text-slate-400">
             <Icon 
               name="Info" 
               size={14} 
