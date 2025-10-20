@@ -12,6 +12,14 @@ import ApplicationFooter from '../../components/ui/ApplicationFooter';
 
 const BROKER_FEE_RATE = 0.00127;
 const MINIMUM_FEE = 4.10;
+const DEFAULT_START_DATE = '2020-01-01';
+const getTodayIso = () => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const DividendCaptureAnalyzer = () => {
   const [theme, setTheme] = useState('light');
@@ -125,6 +133,18 @@ const DividendCaptureAnalyzer = () => {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!initialTicker) {
+      return;
+    }
+    handleFetchData({
+      ticker: initialTicker,
+      marginAmount: '50000',
+      startDate: DEFAULT_START_DATE,
+      endDate: getTodayIso(),
+    });
+  }, [initialTicker, handleFetchData]);
 
   const handleReset = useCallback(() => {
     setGridData([]);

@@ -27,6 +27,60 @@ def normalise_string(value: Optional[str]) -> str:
     return str(value).strip()
 
 
+def _key_variants(key: str) -> List[str]:
+    if key is None:
+        return []
+    text = str(key)
+    variants = set()
+    queue = [text]
+    while queue:
+        current = queue.pop(0)
+        if not current or current in variants:
+            continue
+        variants.add(current)
+
+        lower = current.lower()
+        if lower not in variants:
+            queue.append(lower)
+
+        plus_word = lower.replace("+", " plus ").replace("-", " minus ")
+        if plus_word not in variants:
+            queue.append(plus_word)
+
+        plus_underscore = lower.replace("+", "_plus_").replace("-", "_minus_")
+        if plus_underscore not in variants:
+            queue.append(plus_underscore)
+
+        replaced = lower.replace("-", " ").replace("/", " ")
+        if replaced not in variants:
+            queue.append(replaced)
+
+        no_spaces = replaced.replace(" ", "")
+        if no_spaces not in variants:
+            queue.append(no_spaces)
+
+        underscores = replaced.replace(" ", "_")
+        if underscores not in variants:
+            queue.append(underscores)
+
+        stripped = "".join(ch for ch in replaced if ch.isalnum())
+        if stripped not in variants:
+            queue.append(stripped)
+
+    return list(variants)
+
+
+def get_row_value(row: Dict[str, Optional[str]], *keys: str) -> Optional[str]:
+    for key in keys:
+        if key is None:
+            continue
+        variants = _key_variants(key)
+        for variant in variants:
+            if variant in row:
+                return row[variant]
+    return None
+
+
 def parse_amount(value: Optional[str]) -> Optional[float]:
     if value is None:
         return None
@@ -74,7 +128,7 @@ def build_price_key(offset: int) -> str:
 def build_price_map(row: Dict[str, str]) -> Dict[str, Optional[str]]:
     prices: Dict[str, Optional[str]] = {}
 
-    ex_price = parse_amount(row.get("Ex-Date Price"))
+    ex_price = parse_amount(get_row_value(row, "Ex-Date Price", "ex_dividend_price"))
     formatted_ex_price = format_price(ex_price)
     prices["D+0"] = formatted_ex_price
     prices["D0"] = formatted_ex_price
@@ -83,7 +137,8 @@ def build_price_map(row: Dict[str, str]) -> Dict[str, Optional[str]]:
         if offset == 0:
             continue
         column = f"Price D{offset:+d}".replace("+0", "+0")
-        price_value = parse_amount(row.get(column))
+        modern_column = f"price_d_{'plus' if offset >= 0 else 'minus'}_{abs(offset)}"
+        price_value = parse_amount(get_row_value(row, column, modern_column))
         key = build_price_key(offset)
         prices[key] = format_price(price_value)
 
@@ -96,18 +151,18 @@ def load_upcoming_rows() -> Dict[str, Dict[str, Optional[str]]]:
     with dashboard_path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
-            ticker = normalise_string(row.get("Ticker")).upper()
+            ticker = normalise_string(get_row_value(row, "Ticker")).upper()
             if not ticker:
                 continue
 
-            amount_label = normalise_string(row.get("dividend amount")) or None
-            yield_label = normalise_string(row.get("dividend yield")) or None
-            pay_date = normalise_string(row.get("dividend payment date")) or None
-            ex_date = normalise_string(row.get("Upcoming Dividend Ex Date")) or None
+            amount_label = normalise_string(get_row_value(row, "dividend amount")) or None
+            yield_label = normalise_string(get_row_value(row, "dividend yield")) or None
+            pay_date = normalise_string(get_row_value(row, "dividend payment date")) or None
+            ex_date = normalise_string(get_row_value(row, "Upcoming Dividend Ex Date")) or None
 
             upcoming[ticker] = {
                 "ticker": ticker,
-                "companyName": normalise_string(row.get("Company Name")) or None,
+                "companyName": normalise_string(get_row_value(row, "Company Name")) or None,
                 "exDate": ex_date or None,
                 "payDate": pay_date or None,
                 "amountLabel": amount_label,
@@ -125,7 +180,7 @@ def build_snapshot() -> Dict[str, object]:
     with YAHOO_CSV_PATH.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
-            ticker = normalise_string(row.get("Ticker")).upper()
+            ticker = normalise_string(get_row_value(row, "Ticker")).upper()
             if not ticker:
                 continue
 
@@ -133,28 +188,30 @@ def build_snapshot() -> Dict[str, object]:
                 ticker,
                 {
                     "ticker": ticker,
-                    "companyName": normalise_string(row.get("Company Name")),
+                    "companyName": normalise_string(get_row_value(row, "Company Name")),
                     "events": [],
                     "upcoming": None,
                 },
             )
 
-            if not entry["companyName"] and row.get("Company Name"):
-                entry["companyName"] = normalise_string(row.get("Company Name"))
+            if not entry["companyName"]:
+                company_name = get_row_value(row, "Company Name", "company_name")
+                if company_name:
+                    entry["companyName"] = normalise_string(company_name)
 
-            ex_date = normalise_string(row.get("Ex-Dividend Date"))
+            ex_date = normalise_string(get_row_value(row, "Ex-Dividend Date", "ex_dividend_date"))
             if ex_date:
-                dividend_amount = parse_amount(row.get("Dividend Amount"))
+                dividend_amount = parse_amount(get_row_value(row, "Dividend Amount", "dividend_amount"))
                 event = {
                     "exDate": ex_date,
                     "dividendAmount": dividend_amount,
                     "dividendAmountLabel": (
                         f"{dividend_amount:.4f}"
                         if dividend_amount is not None
-                        else normalise_string(row.get("Dividend Amount")) or None
+                        else normalise_string(get_row_value(row, "Dividend Amount", "dividend_amount")) or None
                     ),
-                    "exDatePrice": parse_amount(row.get("Ex-Date Price")),
-                    "exDatePriceLabel": format_price(parse_amount(row.get("Ex-Date Price"))),
+                    "exDatePrice": parse_amount(get_row_value(row, "Ex-Date Price", "ex_dividend_price")),
+                    "exDatePriceLabel": format_price(parse_amount(get_row_value(row, "Ex-Date Price", "ex_dividend_price"))),
                     "prices": build_price_map(row),
                 }
                 entry["events"].append(event)

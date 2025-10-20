@@ -1,666 +1,495 @@
-"""Fetch company names from Yahoo Finance and write them to a CSV file."""
+#!/usr/bin/env python3
+"""
+Scrape dividend history for SGX tickers from Yahoo Finance.
+
+Yahoo lists Singapore Exchange symbols with a ``.SI`` suffix. This script accepts
+plain tickers (e.g. ``D05``) and automatically targets the corresponding Yahoo symbol.
+
+Usage:
+    python data_fetch.py D05
+    python data_fetch.py --file tickers.txt --output public/yahoo_stock_data.csv
+
+If no tickers are provided, a curated SGX list is used by default.
+"""
 
 from __future__ import annotations
 
+import argparse
+import bisect
 import csv
-import json
-import re
+import logging
+import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
-from urllib import error, parse, request
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from scripts.build_snapshot import OUTPUT_JSON_PATH, build_snapshot
+import requests
 
-
-OVERRIDE_UPCOMING_INFO: Dict[str, Dict[str, str]] = {
-    "1F2": {"date": "2025-10-14", "yield": "1.23%", "amount": "SGD 0.005"},
-    "1F2.SI": {"date": "2025-10-14", "yield": "1.23%", "amount": "SGD 0.005"},
-    "BBW": {"date": "2025-10-14", "yield": "4.31%", "amount": "HKD 3.900"},
-    "BBW.SI": {"date": "2025-10-14", "yield": "4.31%", "amount": "HKD 3.900"},
-    "EH5": {"date": "2025-10-15", "yield": "0.78%", "amount": "AUD 0.005"},
-    "EH5.SI": {"date": "2025-10-15", "yield": "0.78%", "amount": "AUD 0.005"},
-    "5WG": {"date": "2025-10-15", "yield": "4.24%", "amount": "SGD 0.003"},
-    "5WG.SI": {"date": "2025-10-15", "yield": "4.24%", "amount": "SGD 0.003"},
-    "K71U": {"date": "2025-10-15", "yield": "0.82%", "amount": "SGD 0.008"},
-    "K71U.SI": {"date": "2025-10-15", "yield": "0.82%", "amount": "SGD 0.008"},
-    "S68": {"date": "2025-10-16", "yield": "0.60%", "amount": "SGD 0.105"},
-    "S68.SI": {"date": "2025-10-16", "yield": "0.60%", "amount": "SGD 0.105"},
-    "D07": {"date": "2025-10-16", "yield": "0.00%", "amount": "0.000"},
-    "D07.SI": {"date": "2025-10-16", "yield": "0.00%", "amount": "0.000"},
-    "BEC": {"date": "2025-10-22", "payDate": "2025-11-14", "yield": "1.41%", "amount": "SGD 0.060"},
-    "BEC.SI": {"date": "2025-10-22", "payDate": "2025-11-14", "yield": "1.41%", "amount": "SGD 0.060"},
-    "NEX": {"date": "2025-10-22", "payDate": "2025-10-30", "yield": "1.24%", "amount": "SGD 0.005"},
-    "NEX.SI": {"date": "2025-10-22", "payDate": "2025-10-30", "yield": "1.24%", "amount": "SGD 0.005"},
-    "CHJ": {"date": "2025-10-23", "payDate": "2025-11-07", "yield": "1.18%", "amount": "SGD 0.010"},
-    "CHJ.SI": {"date": "2025-10-23", "payDate": "2025-11-07", "yield": "1.18%", "amount": "SGD 0.010"},
-    "T12": {"date": "2025-10-30", "payDate": "2025-11-12", "yield": "1.16%", "amount": "SGD 0.010"},
-    "T12.SI": {"date": "2025-10-30", "payDate": "2025-11-12", "yield": "1.16%", "amount": "SGD 0.010"},
-    "W05": {"date": "2025-10-30", "payDate": "2025-11-17", "yield": "2.08%", "amount": "SGD 0.030"},
-    "W05.SI": {"date": "2025-10-30", "payDate": "2025-11-17", "yield": "2.08%", "amount": "SGD 0.030"},
-    "LCC": {"date": "2025-10-30", "payDate": "2025-11-14", "yield": "4.23%", "amount": "SGD 0.022"},
-    "LCC.SI": {"date": "2025-10-30", "payDate": "2025-11-14", "yield": "4.23%", "amount": "SGD 0.022"},
-    "MIJ": {"date": "2025-10-31", "payDate": "2025-11-14", "yield": "0.77%", "amount": "SGD 0.001"},
-    "MIJ.SI": {"date": "2025-10-31", "payDate": "2025-11-14", "yield": "0.77%", "amount": "SGD 0.001"},
-    "1B1": {"date": "2025-10-31", "payDate": "2025-11-13", "yield": "3.33%", "amount": "SGD 0.012"},
-    "1B1.SI": {"date": "2025-10-31", "payDate": "2025-11-13", "yield": "3.33%", "amount": "SGD 0.012"},
-    "C33": {"date": "2025-10-31", "payDate": "2025-11-13", "yield": "3.26%", "amount": "SGD 0.007"},
-    "C33.SI": {"date": "2025-10-31", "payDate": "2025-11-13", "yield": "3.26%", "amount": "SGD 0.007"},
-    "O08": {"date": "2025-10-31", "yield": "4.10%", "amount": "SGD 0.007"},
-    "O08.SI": {"date": "2025-10-31", "yield": "4.10%", "amount": "SGD 0.007"},
-    "F17": {"date": "2025-11-04", "yield": "3.42%", "amount": "SGD 0.070"},
-    "F17.SI": {"date": "2025-11-04", "yield": "3.42%", "amount": "SGD 0.070"},
-    "K29": {"date": "2025-11-04", "yield": "2.36%", "amount": "HKD 0.039"},
-    "K29.SI": {"date": "2025-11-04", "yield": "2.36%", "amount": "HKD 0.039"},
-    "BQM": {"date": "2025-11-04", "yield": "2.22%", "amount": "SGD 0.018"},
-    "BQM.SI": {"date": "2025-11-04", "yield": "2.22%", "amount": "SGD 0.018"},
-    "564": {"date": "2025-11-05", "yield": "1.41%", "amount": "SGD 0.020"},
-    "564.SI": {"date": "2025-11-05", "yield": "1.41%", "amount": "SGD 0.020"},
-    "5WF": {"date": "2025-11-05", "yield": "0.98%", "amount": "SGD 0.001"},
-    "5WF.SI": {"date": "2025-11-05", "yield": "0.98%", "amount": "SGD 0.001"},
-    "L19": {"date": "2025-11-05", "yield": "2.17%", "amount": "SGD 0.010"},
-    "L19.SI": {"date": "2025-11-05", "yield": "2.17%", "amount": "SGD 0.010"},
-    "DM0": {"date": "2025-11-06", "yield": "0.51%", "amount": "SGD 0.002"},
-    "DM0.SI": {"date": "2025-11-06", "yield": "0.51%", "amount": "SGD 0.002"},
-    "1R6": {"date": "2025-11-06", "yield": "1.22%", "amount": "SGD 0.003"},
-    "1R6.SI": {"date": "2025-11-06", "yield": "1.22%", "amount": "SGD 0.003"},
-    "5DD": {"date": "2025-11-06", "yield": "1.69%", "amount": "SGD 0.030"},
-    "5DD.SI": {"date": "2025-11-06", "yield": "1.69%", "amount": "SGD 0.030"},
-    "UUK": {"date": "2025-11-06", "yield": "2.61%", "amount": "SGD 0.002"},
-    "UUK.SI": {"date": "2025-11-06", "yield": "2.61%", "amount": "SGD 0.002"},
-    "G50": {"date": "2025-11-06", "yield": "1.46%", "amount": "SGD 0.010"},
-    "G50.SI": {"date": "2025-11-06", "yield": "1.46%", "amount": "SGD 0.010"},
-    "A04": {"date": "2025-11-14", "yield": "0.93%", "amount": "SGD 0.002"},
-    "A04.SI": {"date": "2025-11-14", "yield": "0.93%", "amount": "SGD 0.002"},
-    "500": {"date": "2025-11-20", "yield": "2.54%", "amount": "SGD 0.016"},
-    "500.SI": {"date": "2025-11-20", "yield": "2.54%", "amount": "SGD 0.016"},
-    "BVA": {"date": "2025-11-24", "yield": "0.69%", "amount": "MYR 0.005"},
-    "BVA.SI": {"date": "2025-11-24", "yield": "0.69%", "amount": "MYR 0.005"},
-    "S71": {"date": "2025-11-25", "yield": "0.89%", "amount": "SGD 0.002"},
-    "S71.SI": {"date": "2025-11-25", "yield": "0.89%", "amount": "SGD 0.002"},
-    "K03": {"date": "2025-12-03", "yield": "1.16%", "amount": "SGD 0.010"},
-    "K03.SI": {"date": "2025-12-03", "yield": "1.16%", "amount": "SGD 0.010"},
-    "S3N": {"date": "2025-12-11", "yield": "1.48%", "amount": "SGD 0.001"},
-    "S3N.SI": {"date": "2025-12-11", "yield": "1.48%", "amount": "SGD 0.001"},
+# Minimal headers keep us under Yahoo's rate limits for the crumb endpoint.
+USER_AGENT = "Mozilla/5.0"
+REQUEST_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "*/*",
 }
+PRE_EVENT_DAYS = 10
+POST_EVENT_DAYS = 30
+DEFAULT_OUTPUT_PATH = Path(__file__).resolve().parent / "public" / "yahoo_stock_data.csv"
 
-# --- Configuration -----------------------------------------------------
-TICKERS: Tuple[str, ...] = (
-    "D05",
-    "O39",
-    "Z74",
-    "U11",
-    "S63",
-    "J36",
-    "C6L",
-    "S68",
-    "F34",
-    "H78",
-    "BN4",
-    "9CI",
-    "BS6",
-    "Y92",
-    "U96",
-    "C07",
-    "G13",
-    "5E2",
-    "G07",
-    "U14",
-    "C09",
-    "D01",
-    "S58",
-    "U06",
-    "V03",
-    "TQ5",
-    "YF8",
-    "S59",
-    "M04",
-    "E5H",
-    "LCC",
-    "1B1",
-    "C33",
-    "O08",
-    "C52",
-    "F17",
-    "BEC",
-    "NEX",
-    "CHJ",
-    "T12",
-    "W05",
-    "MIJ",
-)
-OUTPUT_PATH = Path(__file__).resolve().parent / "public" / "yahoo_stock_data.csv"
-DASHBOARD_PATH = Path(__file__).resolve().parent / "public" / "dashboard_data.csv"
-YAHOO_SEARCH_URL = "https://query1.finance.yahoo.com/v1/finance/search"
-YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-TIMEOUT_SECONDS = 15
-USER_AGENT = "Mozilla/5.0 (compatible; CodexBot/1.0; +https://openai.com)"
-DIVIDEND_START = datetime(2020, 1, 1, tzinfo=timezone.utc)
-DIVIDEND_END = datetime(2025, 12, 31, tzinfo=timezone.utc)
-BACKWARD_OFFSETS: Tuple[int, ...] = tuple(range(1, 11))
-FORWARD_OFFSETS: Tuple[int, ...] = tuple(range(1, 31))
-# ----------------------------------------------------------------------
+TickerListEntry = Tuple[str, str]
+DEFAULT_TICKERS: List[TickerListEntry] = [
+    ("D05", "DBS Group Holdings"),
+    ("O39", "Oversea-Chinese Banking Corp (OCBC)"),
+    ("Z74", "Singapore Telecommunications (Singtel)"),
+    ("U11", "United Overseas Bank (UOB)"),
+    ("S63", "Singapore Technologies Engineering (ST Engg)"),
+    ("C6L", "Singapore Airlines (SIA)"),
+    ("F34", "Wilmar International"),
+    ("C38U", "CapitaLand Integrated Commercial Trust (CICT)"),
+    ("S68", "Singapore Exchange (SGX)"),
+    ("BN4", "Keppel"),
+    ("9CI", "CapitaLand Investment (CLI)"),
+    ("A17U", "CapitaLand Ascendas REIT"),
+    ("BS6", "Yangzijiang Shipbuilding"),
+    ("Y92", "Thai Beverage"),
+    ("C07", "Jardine Cycle & Carriage"),
+    ("U96", "Sembcorp Industries"),
+    ("G13", "Genting Singapore"),
+    ("N2IU", "Mapletree Pan Asia Commercial Trust (MPACT)"),
+    ("G07", "Great Eastern Holdings"),
+    ("5E2", "Seatrium"),
+    ("U14", "UOL Group"),
+    ("M44U", "Mapletree Logistics Trust (MLT)"),
+    ("C09", "City Developments (CDL)"),
+    ("ME8U", "Mapletree Industrial Trust (MIT)"),
+    ("D01", "DFI Retail Group Holdings Limited"),
+    ("AJBU", "Keppel DC REIT"),
+    ("S58", "SATS Ltd."),
+    ("J69U", "Frasers Centrepoint Trust"),
+    ("U06", "Singapore Land Group Limited"),
+    ("V03", "Venture Corporation Limited"),
+    ("TQ5", "Frasers Property Limited"),
+    ("K71U", "Keppel REIT"),
+    ("T82U", "Suntec REIT"),
+    ("S59", "SIA Engineering Company Limited"),
+    ("CJLU", "NetLink NBN Trust"),
+    ("VC2", "Olam Group Limited"),
+    ("BUOU", "Frasers Logistics & Commercial Trust"),
+    ("YF8", "Yangzijiang Financial Holding Ltd."),
+    ("HMN", "CapitaLand Ascott Trust"),
+    ("E5H", "Golden Agri-Resources Ltd"),
+    ("H02", "Haw Par Corporation Limited"),
+    ("OV8", "Sheng Siong Group"),
+    ("C52", "ComfortDelGro"),
+    ("A7RU", "Keppel Infrastructure Trust (KIT)"),
+    ("C2PU", "Parkway Life REIT (PLife REIT)"),
+    ("AIY", "iFAST Corporation"),
+    ("S07", "Shangri-La Asia"),
+    ("EB5", "First Resources"),
+    ("H15", "Hotel Properties (HPL)"),
+    ("M04", "Mandarin Oriental International Limited"),
+    ("EMI", "Emperador Inc."),
+    ("T14", "Tianjin Pharmaceutical Da Ren Tang Group Corporation Limited"),
+    ("BEC", "BRC Asia Limited"),
+    ("NEX", "Reclaims Global Limited"),
+    ("CHJ", "Uni-Asia Group Limited"),
+    ("LCC", "Lum Chang Creations"),
+    ("T12", "Tat Seng Packaging Ltd"),
+    ("W05", "Wing Tai Holdings Limited"),
+    ("1B1", "HC Surgical Specialists Limited"),
+    ("C33", "Chuan Hup Holdings Limited"),
+]
+DEFAULT_TICKER_NAMES: Dict[str, str] = {symbol: name for symbol, name in DEFAULT_TICKERS}
 
 
-@dataclass(frozen=True)
-class TickerInfo:
+class YahooFinanceError(RuntimeError):
+    """Raised when Yahoo Finance returns an error for a ticker."""
+
+
+@dataclass
+class DividendRecord:
     ticker: str
-    company_name: Optional[str]
-    yahoo_symbol: Optional[str]
+    symbol: str
+    company_name: str
+    ex_dividend_date: str
+    ex_dividend_price: str
+    dividend_amount: str
+    dividend_yield: str
+    currency: str
+    record_date: str
+    payment_date: str
+    declaration_date: str
+    price_offsets: Dict[int, Optional[float]]
+
+    def asdict(self) -> Dict[str, str]:
+        data = {
+            "ticker": self.ticker,
+            "symbol": self.symbol,
+            "company_name": self.company_name,
+            "ex_dividend_date": self.ex_dividend_date,
+            "ex_dividend_price": self.ex_dividend_price,
+            "dividend_amount": self.dividend_amount,
+            "dividend_yield": self.dividend_yield,
+            "currency": self.currency,
+            "record_date": self.record_date,
+            "payment_date": self.payment_date,
+            "declaration_date": self.declaration_date,
+        }
+        for offset in range(1, PRE_EVENT_DAYS + 1):
+            data[f"price_d_minus_{offset}"] = _format_price(self.price_offsets.get(-offset))
+        for offset in range(1, POST_EVENT_DAYS + 1):
+            data[f"price_d_plus_{offset}"] = _format_price(self.price_offsets.get(offset))
+        return data
 
 
-@dataclass(frozen=True)
-class DividendEvent:
-    ex_date: str
-    amount: float
-    prices: Dict[int, Optional[float]]
-    pay_date: Optional[str] = None
+class YahooFinanceDividendScraper:
+    COOKIE_URL = "https://fc.yahoo.com"
+    CRUMB_URL = "https://query1.finance.yahoo.com/v1/test/getcrumb"
+    CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+    CUTOFF_TIMESTAMP = int(datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp())
 
+    def __init__(self, session: Optional[requests.Session] = None) -> None:
+        self.session = session or requests.Session()
+        self.crumb: Optional[str] = None
 
-def build_symbol_candidates(ticker: str) -> Tuple[str, ...]:
-    """Return possible Yahoo Finance symbol variants for a SGX ticker."""
-    base = ticker.strip().upper()
-    if not base:
-        return ()
-    # Yahoo commonly stores SGX listings with a .SI suffix.
-    if base.endswith(".SI"):
-        return (base,)
-    return (f"{base}.SI", base)
+    def refresh_crumb(self) -> None:
+        """Obtain authentication cookies and the crumb token."""
+        logging.debug("Refreshing Yahoo Finance crumb token")
+        response = self.session.get(self.COOKIE_URL, headers=REQUEST_HEADERS, timeout=10)
+        if response.status_code >= 500:
+            response.raise_for_status()
 
-
-def fetch_company_name(symbol: str, candidates: Tuple[str, ...]) -> Tuple[Optional[str], Optional[str]]:
-    """Fetch the company name for a Yahoo Finance symbol using the search endpoint."""
-    query = parse.urlencode({"q": symbol})
-    url = f"{YAHOO_SEARCH_URL}?{query}"
-    req = request.Request(url, headers={"User-Agent": USER_AGENT})
-    with request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-        payload = json.load(resp)
-
-    quotes = payload.get("quotes", [])
-    if not quotes:
-        return None, None
-
-    # First look for exact matches with our candidate symbols.
-    for candidate in candidates:
-        for entry in quotes:
-            symbol_name = entry.get("symbol", "").upper()
-            if symbol_name != candidate:
+        for attempt in range(5):
+            response = self.session.get(self.CRUMB_URL, headers=REQUEST_HEADERS, timeout=10)
+            if response.status_code == 429:
+                wait_time = 1.5 * (attempt + 1)
+                logging.debug("Crumb request throttled; retrying in %.1f seconds", wait_time)
+                time.sleep(wait_time)
                 continue
-            company = entry.get("longname") or entry.get("shortname")
-            if company:
-                return company, symbol_name
 
-    # Fallback: pick the first quote whose symbol starts with the base ticker.
-    base = symbol.upper()
-    for entry in quotes:
-        symbol_name = entry.get("symbol", "").upper()
-        if symbol_name.startswith(base):
-            company = entry.get("longname") or entry.get("shortname")
-            if company:
-                return company, symbol_name
+            response.raise_for_status()
+            crumb = response.text.strip()
+            if not crumb:
+                raise YahooFinanceError("Failed to retrieve crumb token from Yahoo Finance")
+            self.crumb = crumb
+            return
 
-    return None, None
+        raise YahooFinanceError("Unable to obtain crumb token after repeated 429 responses")
+
+    def fetch_dividends(self, ticker: str) -> List[DividendRecord]:
+        symbol = self._normalise_symbol(ticker)
+
+        for attempt in range(6):
+            params = {
+                "range": "10y",
+                "interval": "1d",
+                "events": "div",
+            }
+            if self.crumb:
+                params["crumb"] = self.crumb
+
+            logging.debug("Fetching dividend history for %s (attempt %d)", symbol, attempt + 1)
+            response = self.session.get(
+                self.CHART_URL.format(symbol=symbol),
+                headers=REQUEST_HEADERS,
+                params=params,
+                timeout=20,
+            )
+
+            if response.status_code == 429:
+                wait_time = 1.5 * (attempt + 1)
+                logging.debug("Rate limited on %s; sleeping %.1f seconds", symbol, wait_time)
+                time.sleep(wait_time)
+                continue
+
+            payload = _safe_json(response)
+            chart = payload.get("chart") if payload else None
+
+            if not chart:
+                response.raise_for_status()
+                raise YahooFinanceError(f"No chart data returned for {symbol}")
+
+            error = chart.get("error")
+            if error:
+                code = str(error.get("code", "")).lower()
+                description = error.get("description", "")
+                if "invalid crumb" in code or "unauthorized" in code:
+                    self.refresh_crumb()
+                    continue
+                raise YahooFinanceError(f"Yahoo error for {symbol}: {code} - {description}")
+
+            result = chart.get("result")
+            if not result:
+                logging.info("No dividend data available for %s", ticker)
+                return []
+
+            return self._extract_records(ticker, result[0])
+
+        raise YahooFinanceError(f"Failed to download dividends for {ticker} after retries")
+
+    def _extract_records(self, ticker: str, chart_payload: Dict) -> List[DividendRecord]:
+        meta = chart_payload.get("meta", {}) or {}
+        company_name = meta.get("longName") or meta.get("shortName") or ""
+        display_symbol = meta.get("symbol") or self._normalise_symbol(ticker)
+        currency = meta.get("currency") or ""
+        timestamps, prices = _extract_price_series(chart_payload)
+
+        dividends = (chart_payload.get("events") or {}).get("dividends") or {}
+        if not dividends:
+            logging.info("No dividend events found for %s", ticker)
+            return []
+
+        records: List[DividendRecord] = []
+        for event in sorted(dividends.values(), key=lambda item: item.get("date", 0), reverse=True):
+            ts_raw = event.get("date")
+            if not ts_raw or int(ts_raw) < self.CUTOFF_TIMESTAMP:
+                continue
+            event_date = _ts_to_date(ts_raw)
+            if not event_date:
+                continue
+            amount = event.get("amount")
+            offset_prices = _price_offsets(
+                ts_raw,
+                timestamps,
+                prices,
+                pre=PRE_EVENT_DAYS,
+                post=POST_EVENT_DAYS,
+            )
+            _fill_missing_offsets(offset_prices, pre=PRE_EVENT_DAYS, post=POST_EVENT_DAYS)
+            price = offset_prices.get(0)
+            dividend_yield = None
+            if amount is not None and price:
+                try:
+                    dividend_yield = (float(amount) / price) * 100.0
+                except (TypeError, ValueError, ZeroDivisionError):
+                    dividend_yield = None
+            records.append(
+                DividendRecord(
+                    ticker=ticker,
+                    symbol=display_symbol,
+                    company_name=company_name,
+                    ex_dividend_date=event_date,
+                    ex_dividend_price=_format_price(price),
+                    dividend_amount=_format_amount(amount),
+                    dividend_yield=_format_percent(dividend_yield),
+                    currency=event.get("currency") or currency,
+                    record_date=_ts_to_date(event.get("recordDate")),
+                    payment_date=_ts_to_date(event.get("paymentDate")),
+                    declaration_date=_ts_to_date(event.get("declarationDate")),
+                    price_offsets=offset_prices,
+                )
+            )
+
+        return records
+
+    @staticmethod
+    def _normalise_symbol(ticker: str) -> str:
+        token = ticker.strip().upper()
+        if token.endswith(".SI"):
+            return token
+        if token.endswith(".SG"):
+            return token
+        return f"{token}.SI"
 
 
-def _build_price_map(result: Dict) -> Dict[str, float]:
-    timestamps = result.get("timestamp", [])
-    indicators = result.get("indicators", {})
-    adjclose_series = indicators.get("adjclose", [])
-    close_series = indicators.get("close", [])
-
-    values: List[Optional[float]] = []
-    if adjclose_series:
-        values = adjclose_series[0].get("adjclose", [])
-    elif close_series:
-        values = close_series[0].get("close", [])
-
-    price_map: Dict[str, float] = {}
-    for ts, price in zip(timestamps, values):
-        if price is None:
-            continue
-        try:
-            date_key = datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d")
-        except (TypeError, ValueError, OSError):
-            continue
-        try:
-            price_map[date_key] = float(price)
-        except (TypeError, ValueError):
-            continue
-    return price_map
+def _safe_json(response: requests.Response) -> Dict:
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise YahooFinanceError(f"Failed to parse JSON response: {exc}") from exc
 
 
-def _price_on_or_before(price_map: Dict[str, float], date_obj: datetime, max_lookback: int = 7) -> Optional[float]:
-    current = date_obj
-    for _ in range(max_lookback + 1):
-        key = current.strftime("%Y-%m-%d")
-        price = price_map.get(key)
-        if price is not None:
-            return price
-        current -= timedelta(days=1)
-    return None
+def _ts_to_date(value: Optional[int]) -> str:
+    if value in (None, 0):
+        return ""
+    try:
+        return datetime.fromtimestamp(int(value), tz=timezone.utc).date().isoformat()
+    except (TypeError, ValueError, OSError):
+        return ""
 
 
-def _price_on_or_after(price_map: Dict[str, float], date_obj: datetime, max_lookahead: int = 7) -> Optional[float]:
-    current = date_obj
-    for _ in range(max_lookahead + 1):
-        key = current.strftime("%Y-%m-%d")
-        price = price_map.get(key)
-        if price is not None:
-            return price
-        current += timedelta(days=1)
-    return None
+def _format_amount(value: Optional[float]) -> str:
+    if value is None:
+        return ""
+    if abs(value) >= 1:
+        return f"{value:.4f}"
+    return f"{value:.6f}"
+
+
+def _format_percent(value: Optional[float]) -> str:
+    if value is None:
+        return ""
+    return f"{value:.2f}%"
 
 
 def _format_price(value: Optional[float]) -> str:
-    return f"{value:.4f}" if value is not None else ""
+    if value is None:
+        return ""
+    return f"{value:.4f}"
 
 
-def _normalise_pay_date(value: Optional[object]) -> Optional[str]:
-    if value in (None, "", "null"):
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return datetime.fromtimestamp(int(value), tz=timezone.utc).strftime("%Y-%m-%d")
-        except (ValueError, OSError, TypeError):
-            return None
-    if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(value.replace("Z", "")).date().strftime("%Y-%m-%d")
-        except ValueError:
-            return None
-    return None
-
-
-def _parse_percentage_label(label: Optional[str]) -> Optional[float]:
-    if label is None:
-        return None
-    if isinstance(label, (int, float)):
-        return float(label)
-    cleaned = str(label).replace("%", "").replace("−", "-").strip()
-    if not cleaned:
-        return None
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
-
-
-def _parse_amount_label(label: Optional[str]) -> Optional[float]:
-    if label is None:
-        return None
-    if isinstance(label, (int, float)):
-        return float(label)
-    cleaned = str(label).replace(",", "").strip()
-    match = re.search(r"-?\d+(?:\.\d+)?", cleaned)
-    if not match:
-        return None
-    try:
-        return float(match.group(0))
-    except ValueError:
-        return None
-
-
-def _get_override_upcoming(symbol: Optional[str], ticker: str) -> Optional[Dict[str, str]]:
-    candidates: List[str] = []
-    if symbol:
-        candidates.append(symbol)
-        if symbol.endswith('.SI'):
-            candidates.append(symbol[:-3])
-    if ticker:
-        candidates.append(ticker)
-    for candidate in candidates:
-        info = OVERRIDE_UPCOMING_INFO.get(candidate)
-        if info:
-            return info
-    return None
-
-def fetch_upcoming_ex_date(symbol: str) -> Optional[str]:
-    endpoints = [
-        f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=calendarEvents",
-        f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=calendarEvents",
-    ]
-    for url in endpoints:
-        try:
-            req = request.Request(url, headers={"User-Agent": USER_AGENT})
-            with request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-                payload = json.load(resp)
-        except error.URLError:
-            continue
-
-        result = (payload.get("quoteSummary") or {}).get("result") or []
-        if not result:
-            continue
-
-        events = result[0].get("calendarEvents") or {}
-        for key in ("exDividendDate", "dividendDate"):
-            value = events.get(key)
-            if isinstance(value, dict):
-                raw_timestamp = value.get("raw")
-                if raw_timestamp:
-                    try:
-                        dt_obj = datetime.fromtimestamp(int(raw_timestamp), tz=timezone.utc)
-                        return dt_obj.strftime("%Y-%m-%d")
-                    except (ValueError, OSError, TypeError):
-                        continue
-
-        upcoming = events.get("upcomingEvents") or events.get("events")
-        if isinstance(upcoming, dict):
-            dividends = upcoming.get("dividends")
-            if isinstance(dividends, list):
-                for entry in dividends:
-                    raw = entry.get("date") or entry.get("exDate")
-                    if raw:
-                        try:
-                            dt_obj = datetime.fromtimestamp(int(raw), tz=timezone.utc)
-                            return dt_obj.strftime("%Y-%m-%d")
-                        except (ValueError, OSError, TypeError):
-                            continue
-
-    return None
-
-def _compile_upcoming_info(symbol: Optional[str], ticker: str, dividends: List[DividendEvent]) -> Optional[Dict[str, Optional[str]]]:
-    info: Dict[str, Optional[str]] = {}
-
-    computed_date = _next_ex_date_from_events(dividends)
-    upcoming_event: Optional[DividendEvent] = None
-
-    if computed_date:
-        info['date'] = computed_date
-        upcoming_event = next((event for event in dividends if event.ex_date == computed_date), None)
-    elif dividends:
-        upcoming_event = dividends[0]
-        info['date'] = upcoming_event.ex_date
-
-    if upcoming_event:
-        if upcoming_event.pay_date:
-            info['payDate'] = upcoming_event.pay_date
-        info['amountValue'] = upcoming_event.amount
-        info['amountLabel'] = f"{upcoming_event.amount:.4f}"
-        ex_price = upcoming_event.prices.get(0)
-        if ex_price is not None and ex_price > 0:
-            yield_value = (upcoming_event.amount / ex_price) * 100
-            info['yieldValue'] = yield_value
-            info['yieldLabel'] = f"{yield_value:.2f}%"
-
-    override = _get_override_upcoming(symbol, ticker)
-    if override:
-        if not info.get('date') and override.get('date'):
-            info['date'] = override['date']
-        if not info.get('payDate') and override.get('payDate'):
-            info['payDate'] = override['payDate']
-        if override.get('yield'):
-            info['yieldLabel'] = override['yield']
-            parsed_yield = _parse_percentage_label(override.get('yield'))
-            if parsed_yield is not None:
-                info['yieldValue'] = parsed_yield
-        if override.get('amount'):
-            info['amountLabel'] = override['amount']
-            parsed_amount = _parse_amount_label(override.get('amount'))
-            if parsed_amount is not None:
-                info['amountValue'] = parsed_amount
-
-    if not info.get('date') and symbol:
-        fetched_date = fetch_upcoming_ex_date(symbol)
-        if fetched_date:
-            info['date'] = fetched_date
-
-    return info or None
-
-def _next_ex_date_from_events(dividends: List[DividendEvent]) -> Optional[str]:
-    today = datetime.now(tz=timezone.utc).date()
-    upcoming_dates: List[datetime] = []
-    all_dates: List[datetime] = []
-    for event in dividends:
-        try:
-            ex_date_obj = datetime.strptime(event.ex_date, "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        all_dates.append(ex_date_obj)
-        if ex_date_obj >= today:
-            upcoming_dates.append(ex_date_obj)
-    if upcoming_dates:
-        return min(upcoming_dates).strftime("%Y-%m-%d")
-    if all_dates:
-        return max(all_dates).strftime("%Y-%m-%d")
-    return None
-
-def fetch_dividend_events(symbol: str) -> List[DividendEvent]:
-    """Fetch dividend events for a Yahoo Finance symbol."""
-    params = parse.urlencode({
-        "range": "10y",
-        "interval": "1d",
-        "events": "div",
-        "includeAdjustedClose": "true",
-    })
-    encoded_symbol = parse.quote(symbol)
-    url = f"{YAHOO_CHART_URL.format(symbol=encoded_symbol)}?{params}"
-    req = request.Request(url, headers={"User-Agent": USER_AGENT})
-
-    with request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-        payload = json.load(resp)
-
-    results = payload.get("chart", {}).get("result", [])
-    if not results:
-        return []
-
-    result = results[0]
-    price_map = _build_price_map(result)
-
-    events = result.get("events", {}).get("dividends", {})
-    dividends: List[DividendEvent] = []
-    for entry in events.values():
-        amount = entry.get("amount")
-        timestamp = entry.get("date") or entry.get("exDate")
-        if amount is None or timestamp is None:
+def _extract_price_series(chart_payload: Dict) -> Tuple[List[int], List[float]]:
+    timestamps = chart_payload.get("timestamp") or []
+    indicators = chart_payload.get("indicators") or {}
+    quotes = indicators.get("quote") or []
+    closes = quotes[0].get("close") if quotes else []
+    ts_series: List[int] = []
+    price_series: List[float] = []
+    for ts_raw, close in zip(timestamps, closes):
+        if ts_raw is None or close in (None, "null"):
             continue
         try:
-            amount_val = float(amount)
+            ts = int(ts_raw)
+            price = float(close)
         except (TypeError, ValueError):
             continue
-        try:
-            ex_datetime = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
-        except (TypeError, ValueError, OSError):
+        ts_series.append(ts)
+        price_series.append(price)
+    combined = sorted(zip(ts_series, price_series), key=lambda item: item[0])
+    if combined:
+        ts_series, price_series = map(list, zip(*combined))
+    else:
+        ts_series, price_series = [], []
+    return ts_series, price_series
+
+
+def _price_offsets(
+    timestamp: Optional[int],
+    timestamps: Sequence[int],
+    prices: Sequence[float],
+    pre: int,
+    post: int,
+) -> Dict[int, float]:
+    if timestamp in (None, 0) or not timestamps:
+        return {}
+    ts = int(timestamp)
+    idx = bisect.bisect_right(timestamps, ts) - 1
+    if idx < 0:
+        return {}
+    output: Dict[int, float] = {0: prices[idx]}
+    for step in range(1, pre + 1):
+        pos = idx - step
+        if pos < 0:
+            break
+        output[-step] = prices[pos]
+    for step in range(1, post + 1):
+        pos = idx + step
+        if pos >= len(prices):
+            break
+        output[step] = prices[pos]
+    return output
+
+
+def _fill_missing_offsets(offsets: Dict[int, float], pre: int, post: int) -> None:
+    base = offsets.get(0)
+    if base is None:
+        return
+    last = base
+    for step in range(1, pre + 1):
+        key = -step
+        if key in offsets and offsets[key] is not None:
+            last = offsets[key]
+        else:
+            offsets[key] = last
+    last = base
+    for step in range(1, post + 1):
+        key = step
+        if key in offsets and offsets[key] is not None:
+            last = offsets[key]
+        else:
+            offsets[key] = last
+
+
+def _read_tickers(
+    args: argparse.Namespace, default_tickers: Sequence[TickerListEntry]
+) -> List[str]:
+    tickers: List[str] = []
+
+    if args.file:
+        path = Path(args.file)
+        if not path.exists():
+            raise FileNotFoundError(f"Ticker file not found: {path}")
+        with path.open("r", encoding="utf-8") as fp:
+            for line in fp:
+                token = line.strip()
+                if token and not token.startswith("#"):
+                    tickers.append(token)
+
+    if args.tickers:
+        tickers.extend(args.tickers)
+
+    normalised: List[str] = []
+    for token in tickers:
+        symbol = token.strip()
+        if not symbol:
             continue
-        if ex_datetime < DIVIDEND_START or ex_datetime > DIVIDEND_END:
-            continue
+        normalised.append(symbol.upper())
 
-        prices: Dict[int, Optional[float]] = {}
-        prices[0] = _price_on_or_before(price_map, ex_datetime)
+    if not normalised:
+        normalised = [symbol for symbol, _ in default_tickers]
 
-        for offset in BACKWARD_OFFSETS:
-            target = ex_datetime - timedelta(days=offset)
-            prices[-offset] = _price_on_or_before(price_map, target)
+    deduped: List[str] = []
+    seen = set()
+    for symbol in normalised:
+        if symbol not in seen:
+            seen.add(symbol)
+            deduped.append(symbol)
 
-        for offset in FORWARD_OFFSETS:
-            target = ex_datetime + timedelta(days=offset)
-            prices[offset] = _price_on_or_after(price_map, target)
-
-        pay_date = _normalise_pay_date(
-            entry.get("paymentDate")
-            or entry.get("payDate")
-            or entry.get("payment_date")
-            or entry.get("paymentdate")
-        )
-
-        dividends.append(
-            DividendEvent(
-                ex_date=ex_datetime.strftime("%Y-%m-%d"),
-                amount=amount_val,
-                prices=prices,
-                pay_date=pay_date,
-            )
-        )
-
-    return sorted(dividends, key=lambda item: item.ex_date, reverse=True)
+    return deduped
 
 
-def lookup_ticker(ticker: str) -> TickerInfo:
-    """Return ticker info using Yahoo Finance search results."""
-    base_ticker = ticker.strip().upper()
-    candidates = build_symbol_candidates(base_ticker)
-    for candidate in candidates:
-        try:
-            company_name, matched_symbol = fetch_company_name(candidate, candidates)
-        except error.URLError as exc:
-            print(f"Network error for {candidate}: {exc}")
-            continue
-
-        if company_name:
-            return TickerInfo(ticker=base_ticker, company_name=company_name, yahoo_symbol=matched_symbol)
-
-    print(f"Unable to resolve Yahoo Finance listing for {base_ticker}")
-    return TickerInfo(ticker=base_ticker, company_name=None, yahoo_symbol=None)
-
-
-def gather_ticker_data(tickers: Iterable[str]) -> List[TickerInfo]:
-    """Collect ticker info for all supplied tickers."""
-    results: List[TickerInfo] = []
-    for ticker in tickers:
-        info = lookup_ticker(ticker)
-        results.append(info)
-    return results
-
-
-def write_csv(rows: Iterable[TickerInfo], output_path: Path = OUTPUT_PATH) -> List[Dict[str, Optional[str]]]:
-    """Write ticker information and dividend events to a CSV."""
-    dashboard_rows: Dict[str, Dict[str, Optional[str]]] = {}
-
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        backward_headers = [f"Price D-{offset}" for offset in reversed(BACKWARD_OFFSETS)]
-        forward_headers = [f"Price D+{offset}" for offset in FORWARD_OFFSETS]
-        header = [
-            "Ticker",
-            "Company Name",
-            "Ex-Dividend Date",
-            "Dividend Amount",
-            "Upcoming Ex-Date",
-            "Upcoming Dividend Pay Date",
-            "Upcoming Dividend Yield",
-            "Upcoming Dividend Amount",
-            "Ex-Date Price",
-            *backward_headers,
-            *forward_headers,
-        ]
-        writer.writerow(header)
-        upcoming_cache: Dict[str, Optional[Dict[str, Optional[str]]]] = {}
-
+def _write_csv(path: Path, rows: List[DividendRecord]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].asdict().keys()))
+        writer.writeheader()
         for row in rows:
-            symbol_key = row.yahoo_symbol or row.ticker
-            dividends: List[DividendEvent] = []
-            if row.yahoo_symbol:
-                try:
-                    dividends = fetch_dividend_events(row.yahoo_symbol)
-                except error.URLError as exc:
-                    print(f"Unable to retrieve dividends for {row.yahoo_symbol}: {exc}")
+            writer.writerow(row.asdict())
 
-            info = upcoming_cache.get(symbol_key)
-            if info is None:
-                info = _compile_upcoming_info(row.yahoo_symbol, row.ticker, dividends)
-                if info is None:
-                    info = _get_override_upcoming(row.yahoo_symbol, row.ticker)
-                if info is None and row.yahoo_symbol:
-                    fetched = fetch_upcoming_ex_date(row.yahoo_symbol)
-                    if fetched:
-                        info = {"date": fetched}
-                upcoming_cache[symbol_key] = info
 
-            upcoming_date = info.get('date') if info else ''
-            upcoming_pay_date = info.get('payDate') if info else ''
-            upcoming_yield = info.get('yieldLabel') or info.get('yield') if info else ''
-            if not upcoming_yield and info:
-                value = info.get('yieldValue')
-                if value is not None:
-                    upcoming_yield = f"{float(value):.2f}%"
-            upcoming_amount = info.get('amountLabel') or info.get('amount') if info else ''
-            if not upcoming_amount and info:
-                value = info.get('amountValue')
-                if value is not None:
-                    upcoming_amount = f"{float(value):.4f}"
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Download SGX dividend history from Yahoo Finance. Defaults to a curated SGX list when no tickers are supplied."
+    )
+    parser.add_argument("tickers", nargs="*", help="SGX tickers (e.g. D05).")
+    parser.add_argument("-f", "--file", help="Text file with tickers (one per line).")
+    parser.add_argument(
+        "-o",
+        "--output",
+        default=str(DEFAULT_OUTPUT_PATH),
+        help="CSV output path.",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging.")
+    return parser.parse_args(argv)
 
-            if not dividends:
-                empty_row = [
-                    row.ticker,
-                    row.company_name or "",
-                    "",
-                    "",
-                    upcoming_date,
-                    upcoming_pay_date,
-                    upcoming_yield,
-                    upcoming_amount,
-                    "",
-                ]
-                empty_row.extend([""] * (len(backward_headers) + len(forward_headers)))
-                writer.writerow(empty_row)
+
+def main(argv: Optional[List[str]] = None) -> None:
+    args = parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s: %(message)s",
+    )
+
+    tickers = _read_tickers(args, DEFAULT_TICKERS)
+    scraper = YahooFinanceDividendScraper()
+
+    records: List[DividendRecord] = []
+    for ticker in tickers:
+        try:
+            display_name = DEFAULT_TICKER_NAMES.get(ticker, "")
+            if display_name:
+                logging.info("Fetching dividends for %s (%s)", ticker, display_name)
             else:
-                for event in dividends:
-                    ex_price = _format_price(event.prices.get(0))
-                    backward_values = [
-                        _format_price(event.prices.get(-offset)) for offset in reversed(BACKWARD_OFFSETS)
-                    ]
-                    forward_values = [
-                        _format_price(event.prices.get(offset)) for offset in FORWARD_OFFSETS
-                    ]
-                    pay_date = event.pay_date or upcoming_pay_date or ''
-                    row_values = [
-                        row.ticker,
-                        row.company_name or "",
-                        event.ex_date,
-                        f"{event.amount:.4f}",
-                        upcoming_date,
-                        pay_date,
-                        upcoming_yield,
-                        upcoming_amount,
-                        ex_price,
-                        *backward_values,
-                        *forward_values,
-                    ]
-                    writer.writerow(row_values)
+                logging.info("Fetching dividends for %s", ticker)
+            records.extend(scraper.fetch_dividends(ticker))
+        except Exception as exc:  # noqa: BLE001 - provide context in logs
+            logging.error("Failed to fetch %s: %s", ticker, exc)
 
-            dashboard_rows[row.ticker.upper()] = {
-                "ticker": row.ticker.upper(),
-                "company": row.company_name or "",
-                "exDate": upcoming_date,
-                "payDate": upcoming_pay_date,
-                "dividendAmount": upcoming_amount,
-                "dividendYield": upcoming_yield,
-            }
+    if not records:
+        raise SystemExit("No dividend data downloaded. See log for details.")
 
-    print(f"Wrote Yahoo Finance data to {output_path}")
-    return list(dashboard_rows.values())
-
-
-def write_dashboard_csv(rows: Iterable[TickerInfo], output_path: Path = DASHBOARD_PATH) -> None:
-    """Write unique ticker records for dashboard usage."""
-    seen: Dict[str, str] = {}
-    for row in rows:
-        ticker = row.ticker.upper()
-        if ticker not in seen:
-            seen[ticker] = row.company_name or ""
-
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["Ticker", "Company Name"])
-        for ticker, company_name in seen.items():
-            writer.writerow([ticker, company_name])
-
-    print(f"Wrote dashboard data to {output_path}")
-
-
-def main() -> None:
-    ticker_data = gather_ticker_data(TICKERS)
-    write_csv(ticker_data)
-    write_dashboard_csv(ticker_data)
-    snapshot = build_snapshot()
-    OUTPUT_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with OUTPUT_JSON_PATH.open("w", encoding="utf-8") as handle:
-        json.dump(snapshot, handle, indent=2, sort_keys=False)
-        handle.write("\n")
-    print(f"Wrote consolidated snapshot to {OUTPUT_JSON_PATH}")
+    _write_csv(Path(args.output), records)
+    logging.info("Saved %d dividend records to %s", len(records), args.output)
 
 
 if __name__ == "__main__":

@@ -21,12 +21,11 @@ import csv
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
-import data_fetch
+from data_fetch import DEFAULT_TICKER_NAMES, YahooFinanceDividendScraper, YahooFinanceError
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MASTER_CSV_PATH = PROJECT_ROOT / "public" / "yahoo_stock_data.csv"
-PRICE_HEADER_PREFIX = "Price "
 
 
 def _load_master_csv(path: Path) -> tuple[List[str], List[Dict[str, str]]]:
@@ -47,71 +46,31 @@ def _write_master_csv(path: Path, header: Sequence[str], rows: Iterable[Dict[str
             writer.writerow(row)
 
 
-def _build_price_lookup_from_header(header: Sequence[str]) -> List[tuple[str, str]]:
-    """Construct a lookup list mapping CSV column names to Yahoo price keys."""
-    lookups: List[tuple[str, str]] = []
-    for column in header:
-        if not column.startswith(PRICE_HEADER_PREFIX):
-            continue
-        offset = column[len(PRICE_HEADER_PREFIX) :].strip()
-        if not offset:
-            continue
-        lookups.append((column, offset))
-    return lookups
-
-
-def _format_float(value: float | None) -> str:
-    if value is None:
-        return ""
-    return f"{value:.4f}"
-
-
-def _format_price(value: float | None) -> str:
-    if value is None:
-        return ""
-    return f"{value:.2f}"
-
-
 def refresh_ticker_rows(
     ticker: str,
     header: Sequence[str],
-    price_lookup: Sequence[tuple[str, str]],
+    scraper: YahooFinanceDividendScraper,
 ) -> List[Dict[str, str]]:
     """Fetch dividend events for a ticker and return CSV rows matching the master schema."""
-    info = data_fetch.lookup_ticker(ticker)
-    if not info.yahoo_symbol:
-        raise RuntimeError(f"Unable to resolve Yahoo Finance symbol for {ticker}")
-
-    events = data_fetch.fetch_dividend_events(info.yahoo_symbol)
-    if not events:
+    token = ticker.strip().upper()
+    if not token:
         return []
 
-    upcoming_info = data_fetch._compile_upcoming_info(info.yahoo_symbol, info.ticker, events)  # type: ignore[attr-defined]
+    records = scraper.fetch_dividends(token)
+    if not records:
+        return []
 
     rows: List[Dict[str, str]] = []
-    for event in events:
-        row: Dict[str, str] = {column: "" for column in header}
-        row["Ticker"] = info.ticker
-        row["Company Name"] = info.company_name or ""
-        row["Ex-Dividend Date"] = event.ex_date
-        row["Dividend Amount"] = _format_float(event.amount)
-
-        if upcoming_info:
-            row["Upcoming Ex-Date"] = (upcoming_info.get("date") or "")[:10]
-            row["Upcoming Dividend Pay Date"] = (upcoming_info.get("payDate") or "")[:10]
-            row["Upcoming Dividend Yield"] = upcoming_info.get("yieldLabel") or ""
-            row["Upcoming Dividend Amount"] = upcoming_info.get("amountLabel") or ""
-
-        row["Ex-Date Price"] = _format_price(event.prices.get(0))
-
-        for column, offset_key in price_lookup:
-            price_value = event.prices.get(offset_key)
-            row[column] = _format_price(price_value)
-
+    for record in records:
+        record_map = record.asdict()
+        record_map.setdefault("ticker", token)
+        if not record_map.get("company_name"):
+            record_map["company_name"] = DEFAULT_TICKER_NAMES.get(token, "")
+        row = {column: record_map.get(column, "") for column in header}
         rows.append(row)
 
     # Stable sort by ex-date descending so the most recent event is first
-    rows.sort(key=lambda item: item.get("Ex-Dividend Date") or "", reverse=True)
+    rows.sort(key=lambda item: item.get("ex_dividend_date") or "", reverse=True)
     return rows
 
 
@@ -124,20 +83,23 @@ def enrich_master_csv(tickers: Sequence[str]) -> None:
     if not header:
         raise RuntimeError("Unable to read header from master CSV; aborting.")
 
-    price_lookup = _build_price_lookup_from_header(header)
-
     # Remove rows for target tickers so we can replace them with fresh data
     tickers_upper = {ticker.strip().upper() for ticker in tickers if ticker.strip()}
-    retained_rows = [row for row in existing_rows if row.get("Ticker", "").upper() not in tickers_upper]
+    retained_rows = [row for row in existing_rows if row.get("ticker", "").upper() not in tickers_upper]
 
     refreshed_rows: List[Dict[str, str]] = []
     missing_tickers: List[str] = []
+    scraper = YahooFinanceDividendScraper()
 
     for ticker in sorted(tickers_upper):
         try:
-            new_rows = refresh_ticker_rows(ticker, header, price_lookup)
-        except Exception as exc:  # noqa: BLE001
+            new_rows = refresh_ticker_rows(ticker, header, scraper)
+        except YahooFinanceError as exc:
             print(f"[WARN] Failed to refresh {ticker}: {exc}")
+            missing_tickers.append(ticker)
+            continue
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] Unexpected error refreshing {ticker}: {exc}")
             missing_tickers.append(ticker)
             continue
 

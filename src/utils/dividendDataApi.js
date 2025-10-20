@@ -1,11 +1,109 @@
+import { csvParse } from 'd3-dsv';
+
 const OFFSETS = Array.from({ length: 41 }, (_, idx) => idx - 10); // -10 .. +30
 const SNAPSHOT_URL = '/sgx_snapshot.json';
+const YAHOO_CSV_URL = '/yahoo_stock_data.csv';
+const DASHBOARD_CSV_URL = '/dashboard_data.csv';
 const TICKER_CATALOGUE_STORAGE_KEY = 'sgDividendTickerCatalogue';
 
 const buildPriceKey = (offset) => `D${offset >= 0 ? '+' : ''}${offset}`;
 
+const normaliseKeyVariants = (key) => {
+  if (key === null || key === undefined) {
+    return [];
+  }
+  const text = String(key);
+  const variants = new Set();
+  const queue = [text];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || variants.has(current)) {
+      continue;
+    }
+    variants.add(current);
+
+    const lower = current.toLowerCase();
+    if (!variants.has(lower)) {
+      queue.push(lower);
+    }
+
+    const replaced = lower.replace(/[-/]+/g, ' ');
+    if (!variants.has(replaced)) {
+      queue.push(replaced);
+    }
+
+    const noSpaces = replaced.replace(/\s+/g, '');
+    if (!variants.has(noSpaces)) {
+      queue.push(noSpaces);
+    }
+
+    const underscores = replaced.replace(/\s+/g, '_');
+    if (!variants.has(underscores)) {
+      queue.push(underscores);
+    }
+
+    const plusWord = underscores.replace(/\+/g, 'plus').replace(/-/g, 'minus');
+    if (!variants.has(plusWord)) {
+      queue.push(plusWord);
+    }
+
+    const plusUnderscore = underscores.replace(/\+/g, '_plus_').replace(/-/g, '_minus_');
+    if (!variants.has(plusUnderscore)) {
+      queue.push(plusUnderscore);
+    }
+
+    const stripped = replaced.replace(/[^a-z0-9]+/g, '');
+    if (!variants.has(stripped)) {
+      queue.push(stripped);
+    }
+  }
+
+  return Array.from(variants);
+};
+
+const createRowAccessor = (row) => {
+  const lookup = new Map();
+  Object.entries(row || {}).forEach(([key, value]) => {
+    normaliseKeyVariants(key).forEach((variant) => {
+      if (!lookup.has(variant)) {
+        lookup.set(variant, value);
+      }
+    });
+  });
+  return (key) => {
+    if (!key) {
+      return undefined;
+    }
+    const variants = normaliseKeyVariants(key);
+    for (const variant of variants) {
+      if (lookup.has(variant)) {
+        return lookup.get(variant);
+      }
+    }
+    return undefined;
+  };
+};
+
+const getRowValue = (accessor, ...keys) => {
+  if (!accessor) {
+    return undefined;
+  }
+  for (const key of keys) {
+    if (key === undefined || key === null) {
+      continue;
+    }
+    const value = accessor(key);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+};
+
 let snapshotCache = null;
 let snapshotPromise = null;
+let yahooRowsCache = null;
 
 const normalizePriceMap = (rawPrices) => {
   const prices = {};
@@ -148,26 +246,40 @@ const normaliseSnapshot = (rawSnapshot) => {
 };
 
 const loadSnapshot = async ({ forceRefresh = false } = {}) => {
-  if (snapshotCache && !forceRefresh) {
+  if (!forceRefresh && snapshotCache) {
     return snapshotCache;
   }
-  if (!snapshotPromise || forceRefresh) {
-    snapshotPromise = fetch(SNAPSHOT_URL, { cache: 'no-store' })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Unable to load dividend snapshot. Please try again later.');
-        }
-        return response.json();
-      })
+
+  if (forceRefresh) {
+    snapshotCache = null;
+    snapshotPromise = null;
+  }
+
+  if (!snapshotPromise) {
+    snapshotPromise = buildSnapshotFromCsv()
       .then((data) => {
         snapshotCache = normaliseSnapshot(data);
         return snapshotCache;
       })
-      .catch((error) => {
-        snapshotPromise = null;
-        throw error;
+      .catch(async (csvError) => {
+        console.warn('Unable to build snapshot from CSV data, falling back to bundled JSON snapshot.', csvError);
+        try {
+          const response = await fetch(SNAPSHOT_URL, { cache: 'no-store' });
+          if (!response.ok) {
+            throw new Error('Unable to load dividend snapshot. Please try again later.');
+          }
+          const jsonData = await response.json();
+          snapshotCache = normaliseSnapshot(jsonData);
+          return snapshotCache;
+        } catch (fallbackError) {
+          snapshotPromise = null;
+          const error = new Error('Unable to load dividend snapshot. Please try again later.');
+          error.cause = csvError || fallbackError;
+          throw error;
+        }
       });
   }
+
   return snapshotPromise;
 };
 
@@ -194,6 +306,109 @@ const parseAmountValue = (value) => {
   if (!match) return null;
   const numeric = parseFloat(match[0]);
   return Number.isFinite(numeric) ? numeric : null;
+};
+
+const normaliseString = (value) => {
+  if (value === undefined || value === null) return '';
+  return String(value).trim();
+};
+
+const formatPriceLabel = (value) => {
+  if (!Number.isFinite(value)) return null;
+  return value.toFixed(2);
+};
+
+const buildPriceMapFromRow = (row) => {
+  const get = createRowAccessor(row);
+  const prices = {};
+  const exPrice = parseAmountValue(getRowValue(get, 'Ex-Date Price', 'ex_dividend_price'));
+  const formattedExPrice = formatPriceLabel(exPrice);
+  prices['D+0'] = formattedExPrice;
+  prices.D0 = formattedExPrice;
+
+  OFFSETS.forEach((offset) => {
+    if (offset === 0) {
+      return;
+    }
+    const column = `Price D${offset >= 0 ? '+' : ''}${offset}`;
+    const modernColumn =
+      offset >= 0 ? `price_d_plus_${Math.abs(offset)}` : `price_d_minus_${Math.abs(offset)}`;
+    const priceValue = parseAmountValue(getRowValue(get, column, modernColumn));
+    const key = buildPriceKey(offset);
+    prices[key] = formatPriceLabel(priceValue);
+  });
+
+  return prices;
+};
+
+const parseDashboardUpcomingRow = (row) => {
+  const get = createRowAccessor(row);
+  const ticker = normaliseString(getRowValue(get, 'Ticker')).toUpperCase();
+  if (!ticker) {
+    return null;
+  }
+  const amountLabel = normaliseString(getRowValue(get, 'dividend amount')) || null;
+  const yieldLabel = normaliseString(getRowValue(get, 'dividend yield')) || null;
+  const payDate = normaliseString(getRowValue(get, 'dividend payment date')) || null;
+  const exDate = normaliseString(getRowValue(get, 'Upcoming Dividend Ex Date')) || null;
+
+  return {
+    ticker,
+    companyName: normaliseString(getRowValue(get, 'Company Name')) || '',
+    exDate: exDate || null,
+    payDate,
+    amountLabel,
+    amountValue: parseAmountValue(amountLabel),
+    yieldLabel,
+    yieldValue: parsePercentageValue(yieldLabel),
+  };
+};
+
+const parseYahooUpcomingRow = (row, fallbackCompanyName, ticker) => {
+  const get = createRowAccessor(row);
+  const exDate = normaliseString(getRowValue(get, 'Upcoming Ex-Date')) || null;
+  if (!exDate) {
+    return null;
+  }
+  const amountLabel = normaliseString(getRowValue(get, 'Upcoming Dividend Amount')) || null;
+  const yieldLabel = normaliseString(getRowValue(get, 'Upcoming Dividend Yield')) || null;
+  const payDate = normaliseString(getRowValue(get, 'Upcoming Dividend Pay Date')) || null;
+
+  return {
+    ticker,
+    companyName: normaliseString(getRowValue(get, 'Company Name')) || fallbackCompanyName || '',
+    exDate,
+    payDate,
+    amountLabel,
+    amountValue: parseAmountValue(amountLabel),
+    yieldLabel,
+    yieldValue: parsePercentageValue(yieldLabel),
+  };
+};
+
+const mergeUpcomingEntries = (primary, secondary) => {
+  if (!primary) return secondary || null;
+  if (!secondary) return primary || null;
+  return {
+    ticker: (primary.ticker || secondary.ticker || '').toUpperCase(),
+    companyName: primary.companyName || secondary.companyName || '',
+    exDate: primary.exDate || secondary.exDate || null,
+    payDate: primary.payDate || secondary.payDate || null,
+    amountLabel: primary.amountLabel || secondary.amountLabel || null,
+    amountValue:
+      Number.isFinite(primary.amountValue) && primary.amountValue !== null
+        ? primary.amountValue
+        : Number.isFinite(secondary.amountValue)
+          ? secondary.amountValue
+          : null,
+    yieldLabel: primary.yieldLabel || secondary.yieldLabel || null,
+    yieldValue:
+      Number.isFinite(primary.yieldValue) && primary.yieldValue !== null
+        ? primary.yieldValue
+        : Number.isFinite(secondary.yieldValue)
+          ? secondary.yieldValue
+          : null,
+  };
 };
 
 const itemDateCompare = (a, b) => {
@@ -276,25 +491,43 @@ const filterByDateRange = (items, startDate, endDate) => {
 };
 
 export async function fetchSGXDividendData({ ticker, startDate, endDate }) {
-  const snapshot = await loadSnapshot();
   const normalisedTicker = normaliseInputTicker(ticker);
   if (!normalisedTicker) {
     throw new Error('A valid ticker symbol is required to fetch data.');
   }
 
-  const tickerEntry = snapshot.tickerMap.get(normalisedTicker);
-  if (!tickerEntry) {
+  const snapshot = await loadSnapshot();
+  let tickerEntry = snapshot.tickerMap.get(normalisedTicker);
+  let fallbackCompanyName = '';
+
+  if (!tickerEntry || !Array.isArray(tickerEntry.events) || !tickerEntry.events.length) {
+    const fallback = await loadTickerEventsFromCsv(normalisedTicker);
+    fallbackCompanyName = fallback.companyName || '';
+    tickerEntry = {
+      ticker: normalisedTicker,
+      companyName: fallbackCompanyName,
+      events: fallback.events,
+    };
+  }
+
+  if (!tickerEntry || !Array.isArray(tickerEntry.events) || !tickerEntry.events.length) {
     throw new Error('No records found for the requested ticker in the offline dataset.');
   }
 
   const filteredEvents = filterByDateRange(tickerEntry.events || [], startDate, endDate);
+
+  if (!filteredEvents.length) {
+    return [];
+  }
+
+  const companyName = tickerEntry.companyName || fallbackCompanyName || null;
 
   return filteredEvents.map((event) => ({
     id: `${normalisedTicker}-${event.exDate}`,
     exDate: event.exDate,
     dividendPerShare: Number.isFinite(event.dividendAmount) ? event.dividendAmount : 0,
     prices: event.prices || {},
-    companyName: tickerEntry.companyName || null,
+    companyName,
   }));
 }
 
@@ -598,5 +831,202 @@ export async function fetchLatestDividendSnapshot(ticker) {
       priceValue !== null
         ? priceValue.toFixed(4)
         : (latestEvent.exDatePriceLabel !== undefined ? String(latestEvent.exDatePriceLabel).trim() : ''),
+  };
+}
+
+async function loadCsvRows(url) {
+  if (url === YAHOO_CSV_URL && Array.isArray(yahooRowsCache)) {
+    return yahooRowsCache;
+  }
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to load CSV data from ${url}`);
+  }
+  const text = await response.text();
+  if (!text || !text.trim()) {
+    return [];
+  }
+  const rows = csvParse(text);
+  if (url === YAHOO_CSV_URL) {
+    yahooRowsCache = rows;
+  }
+  return rows;
+}
+
+async function buildSnapshotFromCsv() {
+  const [yahooRows, dashboardRows] = await Promise.all([
+    loadCsvRows(YAHOO_CSV_URL),
+    loadCsvRows(DASHBOARD_CSV_URL).catch((error) => {
+      console.warn('Unable to load dashboard CSV data. Continuing without dashboard enrichment.', error);
+      return [];
+    }),
+  ]);
+
+  if (!Array.isArray(yahooRows) || yahooRows.length === 0) {
+    throw new Error('Yahoo dividend dataset is empty.');
+  }
+
+  const dashboardUpcomingLookup = new Map();
+  dashboardRows.forEach((row) => {
+    const upcoming = parseDashboardUpcomingRow(row);
+    if (upcoming) {
+      dashboardUpcomingLookup.set(upcoming.ticker, upcoming);
+    }
+  });
+
+  const tickerEntries = new Map();
+
+  yahooRows.forEach((row) => {
+    const get = createRowAccessor(row);
+    const ticker = normaliseString(getRowValue(get, 'Ticker')).toUpperCase();
+    if (!ticker) {
+      return;
+    }
+
+    const companyName = normaliseString(getRowValue(get, 'Company Name'));
+    const existing =
+      tickerEntries.get(ticker) ||
+      {
+        ticker,
+        companyName: companyName || '',
+        events: [],
+        upcoming: null,
+      };
+
+    if (!existing.companyName && companyName) {
+      existing.companyName = companyName;
+    }
+
+    const exDate = normaliseString(getRowValue(get, 'Ex-Dividend Date', 'ex_dividend_date'));
+    if (exDate) {
+      const dividendAmount = parseAmountValue(getRowValue(get, 'Dividend Amount', 'dividend_amount'));
+      const rawDividendLabel =
+        normaliseString(getRowValue(get, 'Dividend Amount', 'dividend_amount')) || null;
+      const exDatePrice = parseAmountValue(getRowValue(get, 'Ex-Date Price', 'ex_dividend_price'));
+      const rawExPriceLabel =
+        normaliseString(getRowValue(get, 'Ex-Date Price', 'ex_dividend_price')) || null;
+
+      existing.events.push({
+        exDate,
+        dividendAmount: Number.isFinite(dividendAmount) ? dividendAmount : null,
+        dividendAmountLabel: Number.isFinite(dividendAmount)
+          ? dividendAmount.toFixed(4)
+          : rawDividendLabel,
+        exDatePrice: Number.isFinite(exDatePrice) ? exDatePrice : null,
+        exDatePriceLabel: formatPriceLabel(exDatePrice) || rawExPriceLabel,
+        prices: buildPriceMapFromRow(row),
+      });
+    }
+
+    const upcomingFromRow = parseYahooUpcomingRow(row, existing.companyName, ticker);
+    if (upcomingFromRow) {
+      existing.upcoming = mergeUpcomingEntries(upcomingFromRow, existing.upcoming);
+    }
+
+    if (!tickerEntries.has(ticker)) {
+      tickerEntries.set(ticker, existing);
+    }
+  });
+
+  dashboardUpcomingLookup.forEach((upcoming, ticker) => {
+    const entry = tickerEntries.get(ticker);
+    if (!entry) {
+      tickerEntries.set(ticker, {
+        ticker,
+        companyName: upcoming.companyName || '',
+        events: [],
+        upcoming,
+      });
+      return;
+    }
+    entry.upcoming = mergeUpcomingEntries(upcoming, entry.upcoming);
+    if (!entry.companyName && upcoming.companyName) {
+      entry.companyName = upcoming.companyName;
+    }
+  });
+
+  const tickers = Array.from(tickerEntries.values()).map((entry) => {
+    const events = Array.isArray(entry.events) ? entry.events.slice() : [];
+    events.sort((a, b) => {
+      const aDate = new Date(a.exDate);
+      const bDate = new Date(b.exDate);
+      if (Number.isNaN(aDate.getTime()) || Number.isNaN(bDate.getTime())) {
+        return String(a.exDate || '').localeCompare(String(b.exDate || ''));
+      }
+      return aDate.getTime() - bDate.getTime();
+    });
+    return {
+      ticker: entry.ticker,
+      companyName: entry.companyName || '',
+      events,
+      upcoming: entry.upcoming || null,
+    };
+  });
+
+  tickers.sort((a, b) => a.ticker.localeCompare(b.ticker));
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    tickers,
+  };
+}
+
+async function loadTickerEventsFromCsv(ticker) {
+  const rows = await loadCsvRows(YAHOO_CSV_URL);
+  const canonicalTicker = normaliseInputTicker(ticker);
+  const events = [];
+  let companyName = '';
+
+  rows.forEach((row) => {
+    const get = createRowAccessor(row);
+    const rowTicker = normaliseString(getRowValue(get, 'Ticker', 'ticker')).toUpperCase();
+    if (!rowTicker || rowTicker !== canonicalTicker) {
+      return;
+    }
+
+    if (!companyName) {
+      companyName = normaliseString(getRowValue(get, 'Company Name', 'company_name')) || '';
+    }
+
+    const exDate = normaliseString(getRowValue(get, 'Ex-Dividend Date', 'ex_dividend_date'));
+    if (!exDate) {
+      return;
+    }
+
+    const dividendAmount = parseAmountValue(getRowValue(get, 'Dividend Amount', 'dividend_amount'));
+    const dividendAmountLabel =
+      Number.isFinite(dividendAmount) && dividendAmount !== null
+        ? dividendAmount.toFixed(4)
+        : normaliseString(getRowValue(get, 'Dividend Amount', 'dividend_amount')) || null;
+    const exDatePrice = parseAmountValue(getRowValue(get, 'Ex-Date Price', 'ex_dividend_price'));
+    const exDatePriceLabel =
+      Number.isFinite(exDatePrice) && exDatePrice !== null
+        ? exDatePrice.toFixed(4)
+        : normaliseString(getRowValue(get, 'Ex-Date Price', 'ex_dividend_price')) || null;
+
+    events.push({
+      exDate,
+      dividendAmount: Number.isFinite(dividendAmount) ? dividendAmount : null,
+      dividendAmountLabel,
+      exDatePrice: Number.isFinite(exDatePrice) ? exDatePrice : null,
+      exDatePriceLabel,
+      prices: buildPriceMapFromRow(row),
+    });
+  });
+
+  events.sort((a, b) => {
+    const aDate = new Date(a.exDate);
+    const bDate = new Date(b.exDate);
+    if (Number.isNaN(aDate.getTime()) || Number.isNaN(bDate.getTime())) {
+      return String(a.exDate || '').localeCompare(String(b.exDate || ''));
+    }
+    return aDate.getTime() - bDate.getTime();
+  });
+
+  return {
+    ticker: canonicalTicker,
+    companyName,
+    events,
   };
 }
