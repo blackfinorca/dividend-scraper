@@ -1,0 +1,11 @@
+DONE - complete the data fetching from csv, JSON - complete list for 70 stocks
+analyze each line in the table view and suggest averabe/best entry/exit
+    add open ai summary of the best trades
+    make a small paragraph with the suggestion
+    make a button that will fetch the suggestion and apply on the table view for upcomming dividend date
+better way to show the wide table
+add buttons to calculate margin costs from other brookers
+email and subscription function
+buy me a coffee function
+
+deploy on own domain

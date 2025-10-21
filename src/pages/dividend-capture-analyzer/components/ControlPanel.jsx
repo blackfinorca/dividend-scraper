@@ -161,15 +161,7 @@ const ControlPanel = ({
     <div className={cn('bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-xl overflow-hidden', className)}>
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-white/70 dark:border-slate-700/70">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-lg">
-            <Icon
-              name="Settings"
-              size={18}
-              color="currentColor"
-              strokeWidth={2}
-            />
-          </span>
+        <div className="flex items-center gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-900 dark:text-white">Analysis Parameters</h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">Configure margin, timeframe, and ticker catalogue</p>
@@ -233,12 +225,12 @@ const ControlPanel = ({
 
         {/* Action Buttons */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between pt-4 border-t border-white/70 dark:border-slate-700/70">
-          <div className="flex items-center space-x-3">
-            <Button
-              type="submit"
-              variant="default"
-              loading={loading}
-              iconName="Play"
+        <div className="flex items-center space-x-3">
+          <Button
+            type="submit"
+            variant="default"
+            loading={loading}
+            iconName="Play"
               iconPosition="left"
               iconSize={16}
               disabled={!formData?.ticker || !formData?.marginAmount || tickerOptionsLoading}

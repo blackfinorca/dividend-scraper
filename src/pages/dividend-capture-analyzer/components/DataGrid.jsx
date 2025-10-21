@@ -12,6 +12,7 @@ const SPARKLINE_MIN_OFFSET = PRICE_OFFSETS[0];
 const SPARKLINE_RANGE = PRICE_OFFSETS[PRICE_OFFSETS.length - 1] - SPARKLINE_MIN_OFFSET || 1;
 const BROKER_FEE_RATE = 0.00127;
 const MINIMUM_FEE = 4.10;
+const AUTO_TRADE_COLORS = { buy: '16,185,129', sell: '239,68,68' };
 
 const buildSparkline = (prices) => {
   if (!prices) {
@@ -54,9 +55,10 @@ const buildSparkline = (prices) => {
   return { path, points, exPoint };
 };
 
-const DataGrid = ({ 
-  data = [], 
+const DataGrid = ({
+  data = [],
   marginAmount = 50000,
+  autoTradeMap = null,
   onCellSelect,
   selectedCells = {},
   className = "",
@@ -267,8 +269,8 @@ const DataGrid = ({
         </div>
       )}
       {/* Grid Container */}
-      <div className={cn('overflow-x-auto', fullScreen ? 'flex-1' : '')}>
-        <div className="min-w-max w-full">
+      <div className="flex-1 overflow-x-auto">
+        <div className="min-w-max w-full h-full flex flex-col">
           {/* Header Row */}
           <div className="sticky top-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur border-b border-white/70 dark:border-slate-700/70 z-10">
             <div className="flex">
@@ -318,12 +320,13 @@ const DataGrid = ({
           </div>
 
           {/* Data Rows */}
-          <div className="max-h-96 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto">
             {data?.map((row, rowIndex) => {
               const rowSelections = selectedCells?.[row?.id] || {};
               const buyOffset = rowSelections?.buy?.offset;
               const sellOffset = rowSelections?.sell?.offset;
               const pnlData = calculatePnL(row, buyOffset, sellOffset);
+              const autoTrade = autoTradeMap?.[row?.id];
               const exDatePrice = row?.prices?.['D0'] ? parseFloat(row.prices['D0']) : null;
               const sparkline = buildSparkline(row?.prices);
               const hasSparklinePoints = sparkline.points.length > 0;
@@ -460,6 +463,14 @@ const DataGrid = ({
                       const canSelect = (column?.offset < 0) || (column?.offset > 0);
                       const isHovered = hoveredCell === `${row?.id}-${column?.key}`;
                       let dynamicHighlightStyle = {};
+                      const autoHighlightType =
+                        autoTrade && column?.offset !== 0
+                          ? column?.offset === autoTrade.buyOffset
+                            ? 'buy'
+                            : column?.offset === autoTrade.sellOffset
+                              ? 'sell'
+                              : null
+                          : null;
 
                       if (
                         rowSelections?.buy &&
@@ -486,6 +497,14 @@ const DataGrid = ({
                             };
                           }
                         }
+                      }
+
+                      if (autoHighlightType) {
+                        const color = AUTO_TRADE_COLORS[autoHighlightType] || AUTO_TRADE_COLORS.buy;
+                        dynamicHighlightStyle = {
+                          ...dynamicHighlightStyle,
+                          boxShadow: `0 0 0 2px rgba(${color},0.55) inset`,
+                        };
                       }
                       
                       return (

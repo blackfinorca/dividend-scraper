@@ -1,10 +1,12 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ApplicationHeader from '../../components/ui/ApplicationHeader';
 import StatusBanner from '../../components/ui/StatusBanner';
 import ControlPanel from './components/ControlPanel';
 import SummaryStrip from './components/SummaryStrip';
 import DataGrid from './components/DataGrid';
+import InsightsPanel from './components/InsightsPanel';
+import { computeAutoTradeHighlights } from '../../utils/tradeInsights';
 import DisclaimerFooter from './components/DisclaimerFooter';
 import { calculateSGXMarginCosts } from '../../utils/sgxMarginCalculator';
 import { fetchSGXDividendData, fetchTickerCatalogue } from '../../utils/dividendDataApi';
@@ -35,6 +37,7 @@ const DividendCaptureAnalyzer = () => {
   const [isGridFullScreen, setIsGridFullScreen] = useState(false);
   const [initialTicker, setInitialTicker] = useState('');
   const [highlightFetchButton, setHighlightFetchButton] = useState(false);
+  const [insightsRefreshKey, setInsightsRefreshKey] = useState(0);
   const [searchParams] = useSearchParams();
 
   useEffect(() => {
@@ -241,6 +244,20 @@ const DividendCaptureAnalyzer = () => {
     return totals;
   }, { totalTradeFee: 0, totalMarginFee: 0, totalResult: 0 });
 
+  const parsedMarginAmount = useMemo(() => {
+    const numeric = currentParams?.marginAmount ? parseFloat(currentParams.marginAmount) : null;
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : 50000;
+  }, [currentParams?.marginAmount]);
+
+  const { highlightMap, topTrades, averageBuyOffset, averageSellOffset } = useMemo(() => {
+    if (!Array.isArray(gridData) || gridData.length === 0) {
+      return { highlightMap: {}, topTrades: [], averageBuyOffset: null, averageSellOffset: null };
+    }
+    return computeAutoTradeHighlights(gridData, parsedMarginAmount, {
+      maxRowsPerTicker: 3,
+    });
+  }, [gridData, parsedMarginAmount]);
+
   const rowsLoaded = gridData?.length ?? 0;
 
   return (
@@ -308,6 +325,15 @@ const DividendCaptureAnalyzer = () => {
             highlightFetchButton={highlightFetchButton}
           />
 
+          <InsightsPanel
+            topTrades={topTrades}
+            loading={loading}
+            refreshKey={insightsRefreshKey}
+            averageBuyOffset={averageBuyOffset}
+            averageSellOffset={averageSellOffset}
+            onRefresh={() => setInsightsRefreshKey((prev) => prev + 1)}
+          />
+
           {/* Summary Strip */}
           {rowsLoaded > 0 && (
             <SummaryStrip
@@ -320,15 +346,24 @@ const DividendCaptureAnalyzer = () => {
           )}
 
           {/* Data Grid */}
-          <DataGrid
-            data={gridData}
-            marginAmount={currentParams?.marginAmount ? parseFloat(currentParams?.marginAmount) : 50000}
-            onCellSelect={handleCellSelect}
-            selectedCells={selectedCells}
-            className={isGridFullScreen ? '' : 'mt-6'}
-            fullScreen={isGridFullScreen}
-            onToggleFullScreen={() => setIsGridFullScreen((prev) => !prev)}
-          />
+          <section className="mt-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">Table View</h2>
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Scroll to explore prices and auto-selected trades
+              </div>
+            </div>
+            <DataGrid
+              data={gridData}
+              marginAmount={parsedMarginAmount}
+              autoTradeMap={highlightMap}
+              onCellSelect={handleCellSelect}
+              selectedCells={selectedCells}
+              className={isGridFullScreen ? 'h-full' : 'min-h-[32rem]'}
+              fullScreen={isGridFullScreen}
+              onToggleFullScreen={() => setIsGridFullScreen((prev) => !prev)}
+            />
+          </section>
 
           {/* Disclaimer Footer */}
           <DisclaimerFooter />
