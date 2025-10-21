@@ -45,7 +45,7 @@ export const calculatePnLForOffsets = (row, buyOffset, sellOffset, marginAmountI
   const perLegFee = Math.max(MINIMUM_FEE, marginAmount * BROKER_FEE_RATE);
   const totalTradeFee = perLegFee * 2;
   const dividendReceived = dividendAmount * quantity;
-  const priceDifferencePerShare = buyPrice - sellPrice;
+  const priceDifferencePerShare = sellPrice - buyPrice;
   const priceDifferenceValue = priceDifferencePerShare * quantity;
 
   let marginFee = 0;
@@ -63,7 +63,12 @@ export const calculatePnLForOffsets = (row, buyOffset, sellOffset, marginAmountI
     marginFee = (marginAmount * 0.06 * holdingDays) / 365;
   }
 
-  const totalCost = dividendReceived + priceDifferenceValue - totalTradeFee - marginFee;
+  let totalCost = dividendReceived - totalTradeFee - marginFee;
+  if (priceDifferenceValue >= 0) {
+    totalCost += priceDifferenceValue;
+  } else {
+    totalCost -= Math.abs(priceDifferenceValue);
+  }
   const netPercentage = (totalCost / marginAmount) * 100;
 
   return {
@@ -113,33 +118,44 @@ export const computeAutoTradeHighlights = (
 
     let bestTrade = null;
 
-    PRICE_OFFSETS.forEach((buyOffset) => {
-      if (buyOffset >= 0) {
-        return;
+    let lowestBuy = null;
+    let highestSell = null;
+
+    PRICE_OFFSETS.forEach((offset) => {
+      if (offset < 0) {
+        const key = `D${offset}`;
+        const raw = row?.prices?.[key];
+        const price = raw !== undefined && raw !== null ? parseFloat(raw) : null;
+        if (Number.isFinite(price)) {
+          if (!lowestBuy || price < lowestBuy.price || (price === lowestBuy.price && offset > lowestBuy.offset)) {
+            lowestBuy = { offset, price };
+          }
+        }
+      } else if (offset > 0) {
+        const key = `D+${offset}`;
+        const raw = row?.prices?.[key];
+        const price = raw !== undefined && raw !== null ? parseFloat(raw) : null;
+        if (Number.isFinite(price)) {
+          if (!highestSell || price > highestSell.price || (price === highestSell.price && offset < highestSell.offset)) {
+            highestSell = { offset, price };
+          }
+        }
       }
-      PRICE_OFFSETS.forEach((sellOffset) => {
-        if (sellOffset <= 0) {
-          return;
-        }
-        const trade = calculatePnLForOffsets(row, buyOffset, sellOffset, marginAmount);
-        if (!trade) {
-          return;
-        }
-        if (
-          !bestTrade ||
-          (trade.totalCost ?? Number.NEGATIVE_INFINITY) > (bestTrade.totalCost ?? Number.NEGATIVE_INFINITY)
-        ) {
-          bestTrade = {
-            ...trade,
-            buyOffset,
-            sellOffset,
-            ticker,
-            exDate: row?.exDate || '',
-            dividendPerShare: row?.dividendPerShare || 0,
-          };
-        }
-      });
     });
+
+    if (lowestBuy && highestSell) {
+      const trade = calculatePnLForOffsets(row, lowestBuy.offset, highestSell.offset, marginAmount);
+      if (trade) {
+        bestTrade = {
+          ...trade,
+          buyOffset: lowestBuy.offset,
+          sellOffset: highestSell.offset,
+          ticker,
+          exDate: row?.exDate || '',
+          dividendPerShare: row?.dividendPerShare || 0,
+        };
+      }
+    }
 
     if (!bestTrade) {
       return;

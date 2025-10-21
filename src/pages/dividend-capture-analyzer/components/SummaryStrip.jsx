@@ -7,6 +7,7 @@ const SummaryStrip = ({
   selectedCount = 0,
   totalTradeFee = 0,
   totalMarginFee = 0,
+  totalDividendReceived = 0,
   totalResult = 0,
   className = ''
 }) => {
@@ -19,7 +20,8 @@ const SummaryStrip = ({
     })?.format(amount);
   };
 
-  const hasFinancials = totalTradeFee !== 0 || totalMarginFee !== 0 || totalResult !== 0;
+  const hasFinancials =
+    totalTradeFee !== 0 || totalMarginFee !== 0 || totalDividendReceived !== 0 || totalResult !== 0;
 
   return (
     <div
@@ -65,27 +67,27 @@ const SummaryStrip = ({
 
       {hasFinancials && (
         <div className="mt-4 border-t border-white/70 dark:border-slate-700/70 pt-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="bg-white/80 dark:bg-slate-900/60 border border-white/70 dark:border-slate-700/70 rounded-xl p-5 sm:col-span-1">
               <div className="flex items-center gap-3">
                 <span
-                  className={`p-2 rounded-lg ${
+                  className={`p-2.5 rounded-lg ${
                     totalResult >= 0 ? 'bg-emerald-500/15 text-emerald-500' : 'bg-rose-500/15 text-rose-500'
                   }`}
                 >
                   <Icon
                     name={totalResult >= 0 ? 'TrendingUp' : 'TrendingDown'}
-                    size={18}
+                    size={20}
                     color="currentColor"
-                    strokeWidth={2.5}
+                    strokeWidth={2.7}
                   />
                 </span>
                 <div className="leading-tight">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    Total Cost Result
+                    Total P&amp;L
                   </div>
                   <div
-                    className={`text-lg font-semibold ${
+                    className={`text-2xl font-semibold ${
                       totalResult >= 0 ? 'text-emerald-500' : 'text-rose-500'
                     }`}
                   >
@@ -94,7 +96,26 @@ const SummaryStrip = ({
                 </div>
               </div>
               <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                dividend received + (open price − closing price) − trade fee − margin fee
+                dividend received + (sell price − buy price) − trade fee − margin fee
+              </div>
+            </div>
+
+            <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
+              <div className="flex items-center gap-3">
+                <span className="p-2 rounded-lg bg-emerald-500/15 text-emerald-500">
+                  <Icon name="DollarSign" size={18} color="currentColor" strokeWidth={2.3} />
+                </span>
+                <div className="leading-tight">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Dividend Received
+                  </div>
+                  <div className="text-lg font-semibold text-emerald-500">
+                    {formatCurrency(totalDividendReceived)}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+                Gross cash credited from captures based on selected quantity.
               </div>
             </div>
 

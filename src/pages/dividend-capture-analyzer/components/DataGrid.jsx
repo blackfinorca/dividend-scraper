@@ -118,7 +118,7 @@ const DataGrid = ({
     const perLegFee = Math.max(MINIMUM_FEE, marginAmount * BROKER_FEE_RATE);
     const totalTradeFee = perLegFee * 2;
     const dividendReceived = dividendAmount * quantity;
-    const priceDifferencePerShare = buyPrice - sellPrice;
+    const priceDifferencePerShare = sellPrice - buyPrice;
     const priceDifferenceValue = priceDifferencePerShare * quantity;
 
     try {
@@ -132,11 +132,12 @@ const DataGrid = ({
       });
 
       const marginFee = marginCosts?.financingCost ?? 0;
-      const totalCost =
-        dividendReceived +
-        priceDifferenceValue -
-        totalTradeFee -
-        marginFee;
+      let totalCost = dividendReceived - totalTradeFee - marginFee;
+      if (priceDifferenceValue >= 0) {
+        totalCost += priceDifferenceValue;
+      } else {
+        totalCost -= Math.abs(priceDifferenceValue);
+      }
       const netPercentage = (totalCost / marginAmount) * 100;
 
       return {
@@ -156,11 +157,12 @@ const DataGrid = ({
       console.error('SGX margin calculation error:', error);
 
       const marginFee = (marginAmount * 0.06 * holdingDays) / 365;
-      const totalCost =
-        dividendReceived +
-        priceDifferenceValue -
-        totalTradeFee -
-        marginFee;
+      let totalCost = dividendReceived - totalTradeFee - marginFee;
+      if (priceDifferenceValue >= 0) {
+        totalCost += priceDifferenceValue;
+      } else {
+        totalCost -= Math.abs(priceDifferenceValue);
+      }
       const netPercentage = (totalCost / marginAmount) * 100;
 
       return {
@@ -327,7 +329,8 @@ const DataGrid = ({
               const sellOffset = rowSelections?.sell?.offset;
               const pnlData = calculatePnL(row, buyOffset, sellOffset);
               const autoTrade = autoTradeMap?.[row?.id];
-              const exDatePrice = row?.prices?.['D0'] ? parseFloat(row.prices['D0']) : null;
+              const buyColumnKey = rowSelections?.buy?.columnKey;
+              const selectedBuyPrice = buyColumnKey ? parseFloat(row?.prices?.[buyColumnKey]) : null;
               const sparkline = buildSparkline(row?.prices);
               const hasSparklinePoints = sparkline.points.length > 0;
               const showSparklinePath = Boolean(sparkline.path);
@@ -475,25 +478,24 @@ const DataGrid = ({
                       if (
                         rowSelections?.buy &&
                         !isSelected &&
-                        typeof exDatePrice === 'number' &&
-                        typeof priceValue === 'number' &&
-                        column?.offset > 0
+                        typeof selectedBuyPrice === 'number' &&
+                        Number.isFinite(priceValue)
                       ) {
-                        const diff = priceValue - exDatePrice;
+                        const diff = priceValue - selectedBuyPrice;
                         if (diff !== 0) {
-                          const ratioBase = Math.abs(exDatePrice) > 0 ? Math.abs(diff) / Math.abs(exDatePrice) : 0.3;
+                          const ratioBase = Math.abs(selectedBuyPrice) > 0 ? Math.abs(diff) / Math.abs(selectedBuyPrice) : 0.3;
                           const ratio = Math.min(ratioBase, 0.6);
                           const alphaStart = 0.08 + ratio * 0.2;
                           const alphaEnd = 0.18 + ratio * 0.6;
                           if (diff < 0) {
                             dynamicHighlightStyle = {
                               ...dynamicHighlightStyle,
-                              background: `linear-gradient(180deg, rgba(34,197,94,${alphaStart.toFixed(2)}), rgba(34,197,94,${alphaEnd.toFixed(2)}))`
+                              background: `linear-gradient(180deg, rgba(239,68,68,${alphaStart.toFixed(2)}), rgba(239,68,68,${alphaEnd.toFixed(2)}))`
                             };
                           } else {
                             dynamicHighlightStyle = {
                               ...dynamicHighlightStyle,
-                              background: `linear-gradient(180deg, rgba(251,146,60,${alphaStart.toFixed(2)}), rgba(251,146,60,${alphaEnd.toFixed(2)}))`
+                              background: `linear-gradient(180deg, rgba(16,185,129,${alphaStart.toFixed(2)}), rgba(16,185,129,${alphaEnd.toFixed(2)}))`
                             };
                           }
                         }

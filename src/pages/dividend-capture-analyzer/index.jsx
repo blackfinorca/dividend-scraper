@@ -226,23 +226,25 @@ const DividendCaptureAnalyzer = () => {
           const tradeFeeTotal = perLegFee * 2;
           const marginFee = costCalculation?.financingCost ?? 0;
           const dividendReceived = dividendAmount * quantity;
-          const priceDifferenceValue = (buyPrice - sellPrice) * quantity;
-          const totalCost =
-            dividendReceived +
-            priceDifferenceValue -
-            tradeFeeTotal -
-            marginFee;
+          const priceDifferenceValue = (sellPrice - buyPrice) * quantity;
+          let totalCost = dividendReceived - tradeFeeTotal - marginFee;
+          if (priceDifferenceValue >= 0) {
+            totalCost += priceDifferenceValue;
+          } else {
+            totalCost -= Math.abs(priceDifferenceValue);
+          }
 
           return {
             totalTradeFee: totals.totalTradeFee + tradeFeeTotal,
             totalMarginFee: totals.totalMarginFee + marginFee,
+            totalDividendReceived: totals.totalDividendReceived + dividendReceived,
             totalResult: totals.totalResult + totalCost,
           };
         }
       }
     }
     return totals;
-  }, { totalTradeFee: 0, totalMarginFee: 0, totalResult: 0 });
+  }, { totalTradeFee: 0, totalMarginFee: 0, totalDividendReceived: 0, totalResult: 0 });
 
   const parsedMarginAmount = useMemo(() => {
     const numeric = currentParams?.marginAmount ? parseFloat(currentParams.marginAmount) : null;
@@ -336,13 +338,14 @@ const DividendCaptureAnalyzer = () => {
 
           {/* Summary Strip */}
           {rowsLoaded > 0 && (
-            <SummaryStrip
-              rowsLoaded={rowsLoaded}
-              selectedCount={selectedCount}
-              totalTradeFee={aggregates.totalTradeFee}
-              totalMarginFee={aggregates.totalMarginFee}
-              totalResult={aggregates.totalResult}
-            />
+          <SummaryStrip
+            rowsLoaded={rowsLoaded}
+            selectedCount={selectedCount}
+            totalTradeFee={aggregates.totalTradeFee}
+            totalMarginFee={aggregates.totalMarginFee}
+            totalDividendReceived={aggregates.totalDividendReceived}
+            totalResult={aggregates.totalResult}
+          />
           )}
 
           {/* Data Grid */}
