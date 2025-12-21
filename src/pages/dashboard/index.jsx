@@ -10,6 +10,7 @@ import {
   fetchLatestDividendSnapshot,
 } from '../../utils/dividendDataApi';
 import Button from '../../components/ui/Button';
+import Icon from '../../components/AppIcon';
 
 const formatCurrency = (value) => {
   if (value === null || Number.isNaN(value)) {
@@ -38,6 +39,9 @@ const Dashboard = () => {
   const [snapshot, setSnapshot] = useState(null);
   const [shareCountInput, setShareCountInput] = useState('');
   const [marginAmountInput, setMarginAmountInput] = useState('');
+  const [aiRecommendation, setAiRecommendation] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
   const navigate = useNavigate();
 
   const tickerVariantLookup = useMemo(() => {
@@ -69,13 +73,11 @@ const Dashboard = () => {
     return map;
   }, [tickerOptions]);
 
-  const { lookaheadDays, horizonLabel } = useMemo(() => {
-    const now = new Date();
-    const horizonEnd = new Date(2025, 11, 31); // fixed horizon through end of 2025
-    const diffMs = Math.max(0, horizonEnd.getTime() - now.getTime());
-    const diffDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
-    const label = horizonEnd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    return { lookaheadDays: diffDays, horizonLabel: label };
+  const { lookaheadDays, horizonLabel, lookaheadHelper } = useMemo(() => {
+    // Show all upcoming dividends from the feed (large window to avoid filtering)
+    const label = 'All upcoming dividends';
+    const helper = 'Full dataset';
+    return { lookaheadDays: 3650, horizonLabel: label, lookaheadHelper: helper };
   }, []);
 
   useEffect(() => {
@@ -192,7 +194,7 @@ const Dashboard = () => {
 
   const totalUpcoming = sortedUpcomingDividends.length;
 
-  const isWithinSevenDays = useCallback((dateLike) => {
+  const isWithinThirtyDays = useCallback((dateLike) => {
     if (!dateLike) {
       return false;
     }
@@ -203,7 +205,7 @@ const Dashboard = () => {
     const today = new Date();
     const diffMs = target.getTime() - today.getTime();
     const diffDays = diffMs / (1000 * 60 * 60 * 24);
-    return diffDays >= 0 && diffDays < 7;
+    return diffDays >= 0 && diffDays < 30;
   }, []);
 
   const handleAnalyzeTicker = useCallback(
@@ -299,6 +301,193 @@ const Dashboard = () => {
 
   const selectedTickerMeta = selectedTicker ? tickerCanonicalLookup.get(selectedTicker) : null;
 
+  const generateAiSummary = useCallback((records) => {
+    if (!Array.isArray(records) || !records.length) {
+      return null;
+    }
+    const events = [];
+    const profitsByTicker = new Map();
+    const countsByTicker = new Map();
+    const yieldsByTicker = new Map();
+    const profitsByCount = new Map();
+    const profitsByYear = new Map();
+
+    records.forEach((row) => {
+      const ticker = (row?.ticker || '').toUpperCase();
+      const exDate = row?.ex_dividend_date;
+      if (!ticker || !exDate) {
+        return;
+      }
+      const parseNum = (value) => {
+        if (value === null || value === undefined || value === '') {
+          return null;
+        }
+        const cleaned = String(value).replace('%', '');
+        const numeric = Number.parseFloat(cleaned);
+        return Number.isFinite(numeric) ? numeric : null;
+      };
+      const buyPrice = parseNum(row?.price_d_minus_1);
+      const sellPrice = parseNum(row?.price_d_plus_1);
+      const dividend = parseNum(row?.dividend_amount);
+      const exPrice = parseNum(row?.ex_dividend_price);
+      if (
+        buyPrice === null ||
+        sellPrice === null ||
+        dividend === null ||
+        exPrice === null ||
+        exPrice <= 0
+      ) {
+        return;
+      }
+      const profit = dividend + (sellPrice - buyPrice);
+      const yieldPct = (dividend / exPrice) * 100;
+
+      events.push({ ticker, exDate, profit, yieldPct });
+      profitsByTicker.set(ticker, (profitsByTicker.get(ticker) || 0) + profit);
+      countsByTicker.set(ticker, (countsByTicker.get(ticker) || 0) + 1);
+      yieldsByTicker.set(ticker, (yieldsByTicker.get(ticker) || 0) + yieldPct);
+
+      const year = new Date(exDate).getFullYear();
+      profitsByYear.set(year, (profitsByYear.get(year) || 0) + profit);
+    });
+
+    if (!events.length) {
+      return null;
+    }
+
+    countsByTicker.forEach((count, ticker) => {
+      const aggregateProfit = profitsByTicker.get(ticker) || 0;
+      const list = profitsByCount.get(count) || [];
+      list.push(aggregateProfit / count);
+      profitsByCount.set(count, list);
+    });
+
+    const payoutStats = Array.from(profitsByCount.entries())
+      .map(([count, profits]) => ({
+        count,
+        avgProfit: profits.reduce((sum, value) => sum + value, 0) / profits.length,
+        samples: profits.length,
+      }))
+      .sort((a, b) => b.avgProfit - a.avgProfit);
+
+    const topPayout = payoutStats[0];
+
+    const sortedEvents = events.slice().sort((a, b) => a.yieldPct - b.yieldPct);
+    let cumulativeProfit = 0;
+    let yieldThreshold = sortedEvents[0]?.yieldPct ?? 0;
+    sortedEvents.forEach((event, index) => {
+      cumulativeProfit += event.profit;
+      const average = cumulativeProfit / (index + 1);
+      if (average > 0 && yieldThreshold === sortedEvents[0]?.yieldPct) {
+        yieldThreshold = event.yieldPct;
+      }
+    });
+
+    const tickerAverages = Array.from(profitsByTicker.entries()).map(([ticker, total]) => ({
+      ticker,
+      avgProfit: total / (countsByTicker.get(ticker) || 1),
+      events: countsByTicker.get(ticker) || 0,
+      avgYield:
+        (yieldsByTicker.get(ticker) || 0) / Math.max(1, countsByTicker.get(ticker) || 1),
+    }));
+
+    const topTickers = tickerAverages
+      .filter((entry) => entry.events >= 3)
+      .sort((a, b) => b.avgProfit - a.avgProfit)
+      .slice(0, 5);
+
+    const bestYear = Array.from(profitsByYear.entries())
+      .filter(([year]) => Number.isFinite(year))
+      .map(([year, profit]) => ({ year, profit }))
+      .sort((a, b) => b.profit - a.profit)[0];
+
+    return {
+      totalEvents: events.length,
+      topTickers,
+      bestYear,
+      yieldThreshold: yieldThreshold ?? 0,
+      idealPayoutCount: topPayout,
+    };
+  }, []);
+
+  const handleFetchRecommendations = useCallback(async () => {
+    setAiLoading(true);
+    setAiError('');
+    setAiRecommendation('');
+
+    const apiKey = (import.meta.env.VITE_OPENAI_API_KEY || '').trim();
+    if (!apiKey) {
+      setAiLoading(false);
+      setAiError('OpenAI API key not configured.');
+      return;
+    }
+
+    try {
+      const datasetResponse = await fetch('/yahoo_stock_data.json', { cache: 'no-store' });
+      if (!datasetResponse.ok) {
+        throw new Error('Unable to load historical dividend data.');
+      }
+      const dataset = await datasetResponse.json();
+      const summary = generateAiSummary(dataset);
+      if (!summary) {
+        throw new Error('Dataset does not contain enough information for recommendations.');
+      }
+
+      const prompt = `You are an SGX dividend capture strategist. Analyze the provided summary of historical dividend events from yahoo_stock_data.json and recommend:\n1) Which 5 stocks have the best history of profitable dividend capture trades.\n2) Which calendar year was most profitable overall.\n3) The ideal dividend yield threshold and number of payouts for consistent profitability.\n\nSummary:\nTotal events analyzed: ${summary.totalEvents}.\nIdeal payout cadence: ${
+        summary.idealPayoutCount?.count || 'N/A'
+      } events/year (avg profit ${summary.idealPayoutCount?.avgProfit?.toFixed(4) || 'N/A'} SGD).\nYield threshold for profitability: ${summary.yieldThreshold?.toFixed(
+        3
+      )}%.\nTop tickers with strongest history:\n${summary.topTickers
+        .map(
+          (entry, index) =>
+            `${index + 1}. ${entry.ticker} — avg profit ${entry.avgProfit.toFixed(
+              4
+            )} SGD over ${entry.events} captures (avg yield ${entry.avgYield.toFixed(2)}%).`
+        )
+        .join('\n')}\nMost profitable calendar year: ${
+        summary.bestYear ? `${summary.bestYear.year} (total profit ${summary.bestYear.profit.toFixed(4)} SGD)` : 'N/A'
+      }.\n\nProvide concise recommendations with rationale.`;
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          temperature: 0.2,
+          max_tokens: 300,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are an SGX dividend capture analyst. Provide actionable, concise recommendations based on provided data. Always mention the key tickers, yield threshold, and payout cadence.',
+            },
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenAI request failed (${response.status})`);
+      }
+      const payload = await response.json();
+      const text = payload?.choices?.[0]?.message?.content?.trim();
+      if (!text) {
+        throw new Error('OpenAI did not return a recommendation.');
+      }
+      setAiRecommendation(text);
+    } catch (error) {
+      setAiError(error?.message || 'Unable to generate AI recommendation.');
+    } finally {
+      setAiLoading(false);
+    }
+  }, [generateAiSummary]);
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white flex flex-col">
       <ApplicationHeader
@@ -320,9 +509,9 @@ const Dashboard = () => {
               </div>
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4 text-right">
-                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Lookahead</span>
+                  <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Scope</span>
                   <div className="mt-1 text-lg font-semibold">{horizonLabel}</div>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">{lookaheadDays} days remaining</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">{lookaheadHelper}</span>
                 </div>
                 <div className="rounded-xl border border-white/70 dark:border-slate-700/70 bg-white/70 dark:bg-slate-900/40 backdrop-blur p-4 text-right">
                   <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Upcoming</span>
@@ -337,6 +526,51 @@ const Dashboard = () => {
             <StatusBanner type="error" message={error} className="mb-4" />
           )}
 
+          <section className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-xl shadow-md p-4">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                    AI Recommendation
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Quick insight based on your historical dividend capture data.
+                  </p>
+                </div>
+                <Button
+                  onClick={handleFetchRecommendations}
+                  loading={aiLoading}
+                  disabled={aiLoading}
+                  size="sm"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  Recommend me
+                </Button>
+              </div>
+              {aiError && (
+                <div className="text-xs text-red-500 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg px-3 py-2">
+                  {aiError}
+                </div>
+              )}
+              {aiLoading && !aiError && (
+                <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                  <Icon name="Loader2" className="animate-spin" size={14} />
+                  Generating recommendation…
+                </div>
+              )}
+              {aiRecommendation && !aiLoading && (
+                <div className="text-sm text-slate-700 dark:text-slate-200 bg-white/70 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-3 whitespace-pre-line leading-relaxed">
+                  {aiRecommendation}
+                </div>
+              )}
+              {!aiRecommendation && !aiError && !aiLoading && (
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Click “Recommend me” to get ticker ideas and yield guidance based on recent capture performance.
+                </div>
+              )}
+            </div>
+          </section>
+
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -344,21 +578,21 @@ const Dashboard = () => {
                   Upcoming Ex-Dividend Events
                 </h2>
                 <p className="text-sm text-slate-600 dark:text-slate-300">
-                  Sorted by ex-date; cards highlight events within 7 days so you can plan captures quickly.
+                  Sorted by ex-date; cards highlight events within the next 30 days so you can plan captures quickly.
                 </p>
               </div>
               <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                 <span className="inline-flex h-3 w-3 rounded-full bg-slate-900/70 dark:bg-white/80" />
-                <span>Ex-date within the next week</span>
+                <span>Ex-date within the next 30 days</span>
               </div>
             </div>
 
             {loading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {Array.from({ length: 3 }).map((_, index) => (
                   <div
                     key={`skeleton-${index}`}
-                    className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-lg border border-white/70 dark:border-slate-700/70 rounded-xl shadow-lg p-6 animate-pulse space-y-4"
+                    className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-lg border border-white/70 dark:border-slate-700/70 rounded-xl shadow-lg p-4 animate-pulse space-y-3"
                   >
                     <div className="h-6 bg-slate-200/70 dark:bg-slate-700/70 rounded" />
                     <div className="h-4 bg-slate-200/70 dark:bg-slate-700/70 rounded w-3/4" />
@@ -375,13 +609,14 @@ const Dashboard = () => {
                 No upcoming ex-dividend dates scheduled through {horizonLabel}.
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {sortedUpcomingDividends.map((item) => {
-                  const highlight = isWithinSevenDays(item.exDate);
+                  const highlight = isWithinThirtyDays(item.exDate);
+                  const previousYearCount = item.prevYearEventCount ?? 0;
                   return (
                     <div
                       key={`${item.ticker}-${item.exDate}`}
-                      className={`bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/90 dark:border-slate-700/90 rounded-xl shadow-lg p-6 transition-all duration-200 hover:shadow-xl flex flex-col gap-4 ${
+                      className={`bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/90 dark:border-slate-700/90 rounded-xl shadow-md p-4 transition-all duration-200 hover:shadow-lg flex flex-col gap-3 ${
                         highlight ? 'ring-1 ring-slate-900/50 dark:ring-white/60' : ''
                       }`}
                     >
@@ -420,6 +655,14 @@ const Dashboard = () => {
                           </div>
                         </div>
                       </div>
+                      <div className="rounded-xl border border-dashed border-slate-200/80 dark:border-slate-700/70 bg-slate-50/70 dark:bg-slate-900/40 px-3 py-2 flex flex-col">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          Latest Year Ex-Dates
+                        </span>
+                        <span className="text-base font-semibold text-slate-900 dark:text-white">
+                          {previousYearCount}
+                        </span>
+                      </div>
                       <div className="flex items-center justify-between pt-2">
                         <Button
                           size="sm"
@@ -442,156 +685,6 @@ const Dashboard = () => {
             )}
           </section>
 
-          <section className="mt-10 bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-xl overflow-hidden">
-            <div className="px-6 py-5 border-b border-white/70 dark:border-slate-700/70 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-semibold text-slate-900 dark:text-white font-['Poppins',sans-serif]">
-                  Dividend Capture Calculator
-                </h2>
-                <p className="text-sm text-slate-600 dark:text-slate-300 max-w-2xl">
-                  Back-test ex-date capture plays: we prefill dividends and price history so you can size positions with confidence.
-                </p>
-              </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Data refreshed {new Date().toLocaleString('en-GB')}
-              </div>
-            </div>
-
-            <div className="px-6 py-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="sm:col-span-2 lg:col-span-1">
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2 block" htmlFor="dashboard-ticker-input">
-                  Ticker
-                </label>
-                <Input
-                  id="dashboard-ticker-input"
-                  placeholder="Start typing (e.g. D05)"
-                  value={tickerInput}
-                  onChange={(event) => setTickerInput(event.target.value)}
-                  list="dashboard-tickers"
-                  className="bg-white/70 dark:bg-slate-900/50 border border-white/70 dark:border-slate-700/80 focus:ring-2 focus:ring-blue-500"
-                />
-                <datalist id="dashboard-tickers">
-                  {tickerOptions.map((option) => (
-                    <option key={option.ticker} value={option.ticker}>
-                      {option.displayTicker}
-                      {option.companyName ? ` — ${option.companyName}` : ''}
-                      {option.marketCapDisplay ? ` — ${option.marketCapDisplay}` : ''}
-                    </option>
-                  ))}
-                </datalist>
-                {selectedTicker && (
-                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-300">
-                    {selectedTickerMeta?.displayTicker ?? selectedTicker}
-                    {calculatorTickerLabel ? ` — ${calculatorTickerLabel}` : ''}
-                  </div>
-                )}
-                {!selectedTicker && tickerInput && (
-                  <div className="mt-2 text-xs text-red-500">
-                    {tickerOptions.length
-                      ? 'Select a valid ticker from the catalogue.'
-                      : 'Ticker catalogue not available yet.'}
-                  </div>
-                )}
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2 block" htmlFor="share-count">
-                  Number of Shares
-                </label>
-                <Input
-                  id="share-count"
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="e.g. 1000"
-                  value={shareCountInput}
-                  onChange={(event) => setShareCountInput(event.target.value)}
-                  className="bg-white/70 dark:bg-slate-900/50 border border-white/70 dark:border-slate-700/80 focus:ring-2 focus:ring-blue-500"
-                />
-                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  Leave blank if you prefer to work with a margin amount.
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2 block" htmlFor="margin-amount">
-                  Margin Amount (SGD)
-                </label>
-                <Input
-                  id="margin-amount"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="e.g. 15000"
-                  value={marginAmountInput}
-                  onChange={(event) => setMarginAmountInput(event.target.value)}
-                  className="bg-white/70 dark:bg-slate-900/50 border border-white/70 dark:border-slate-700/80 focus:ring-2 focus:ring-blue-500"
-                />
-                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  If both fields are filled, priority is given to the share count.
-                </div>
-              </div>
-            </div>
-
-            <div className="px-6 py-6 border-t border-white/70 dark:border-slate-700/70 bg-white/60 dark:bg-slate-900/40 backdrop-blur">
-              {calculatorLoading ? (
-                <div className="text-sm text-slate-600 dark:text-slate-300 animate-pulse">Loading dividend history...</div>
-              ) : calculatorError ? (
-                <div className="text-sm text-red-500">{calculatorError}</div>
-              ) : !selectedTicker ? (
-                <div className="text-sm text-slate-600 dark:text-slate-300">
-                  Pick a ticker to view the latest dividend information.
-                </div>
-              ) : !snapshot ? (
-                <div className="text-sm text-slate-600 dark:text-slate-300">
-                  No dividend history found for the selected ticker.
-                </div>
-              ) : (
-                <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
-                    <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Last Ex-Dividend Date</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
-                      {snapshot.lastExDate ? new Date(snapshot.lastExDate).toLocaleDateString('en-GB') : '—'}
-                    </div>
-                  </div>
-                  <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
-                    <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Dividend / Share</div>
-                    <div className="mt-2 text-lg font-mono font-semibold text-slate-900 dark:text-white">
-                      {snapshot.dividendAmount !== null ? formatMoney(snapshot.dividendAmount, 4) : '—'}
-                    </div>
-                  </div>
-                  <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
-                    <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Ex-Date Price</div>
-                    <div className="mt-2 text-lg font-mono font-semibold text-slate-900 dark:text-white">
-                      {snapshot.exDatePrice !== null ? formatMoney(snapshot.exDatePrice, 4) : '—'}
-                    </div>
-                  </div>
-                  <div className="bg-white/70 dark:bg-slate-900/40 border border-white/70 dark:border-slate-700/70 rounded-xl p-4">
-                    <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Estimated Dividend</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
-                      {calculatorResult?.totalDividend !== null
-                        ? `S$ ${formatMoney(calculatorResult.totalDividend, 2)}`
-                        : '—'}
-                    </div>
-                    {calculatorResult?.shares !== null && (
-                      <div className="text-xs text-slate-500 dark:text-slate-300 mt-2">
-                        Based on {calculatorResult.shares.toLocaleString('en-SG')} shares
-                        {parsedMarginAmount !== null && snapshot.exDatePrice ? (
-                          <>
-                            {' '}
-                            (≈ S$ {formatMoney(calculatorResult.shares * snapshot.exDatePrice, 2)} deployed)
-                          </>
-                        ) : null}
-                      </div>
-                    )}
-                    {calculatorResult?.estimatedYield !== null && (
-                      <div className="text-xs text-slate-500 dark:text-slate-300 mt-1">
-                        Approx. yield on capital: {calculatorResult.estimatedYield.toFixed(2)}%
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </section>
         </div>
       </main>
       <ApplicationFooter />

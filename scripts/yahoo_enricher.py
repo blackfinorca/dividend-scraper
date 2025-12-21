@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Enrich the yahoo_stock_data.csv file with dividend history fetched from Yahoo Finance.
+"""Enrich the yahoo_stock_data.json file with dividend history fetched from Yahoo Finance.
 
 This helper script targets tickers you pass on the command line, refreshes their dividend
-events using Yahoo's public endpoints, and rewrites the CSV with the new rows while leaving
+events using Yahoo's public endpoints, and rewrites the JSON with the new rows while leaving
 other tickers intact.
 
 Usage:
@@ -11,13 +11,13 @@ Usage:
 Notes:
     • Requires outbound network access so it should be run on your machine (not inside
       the Codex sandbox).
-    • Updates are applied in-place to public/yahoo_stock_data.csv; take a backup if needed.
+    • Updates are applied in-place to public/yahoo_stock_data.json; take a backup if needed.
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
+import json
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
@@ -25,33 +25,34 @@ from data_fetch import DEFAULT_TICKER_NAMES, YahooFinanceDividendScraper, YahooF
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MASTER_CSV_PATH = PROJECT_ROOT / "public" / "yahoo_stock_data.csv"
+MASTER_JSON_PATH = PROJECT_ROOT / "public" / "yahoo_stock_data.json"
 
 
-def _load_master_csv(path: Path) -> tuple[List[str], List[Dict[str, str]]]:
-    """Return the header and all existing rows from the master CSV."""
-    with path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        header = reader.fieldnames or []
-        rows = list(reader)
-    return header, rows
+def _load_master_json(path: Path) -> List[Dict[str, str]]:
+    """Return all existing rows from the master JSON dataset."""
+    if not path.exists():
+        raise FileNotFoundError(f"Master dataset not found: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, list):
+        raise RuntimeError(f"Unexpected JSON shape in {path}")
+    return data
 
 
-def _write_master_csv(path: Path, header: Sequence[str], rows: Iterable[Dict[str, str]]) -> None:
-    """Persist rows back to the master CSV with the provided header."""
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(header))
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
+def _write_master_json(path: Path, rows: Iterable[Dict[str, str]]) -> None:
+    """Persist rows back to the master JSON dataset."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = list(rows)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
 
 
 def refresh_ticker_rows(
     ticker: str,
-    header: Sequence[str],
     scraper: YahooFinanceDividendScraper,
 ) -> List[Dict[str, str]]:
-    """Fetch dividend events for a ticker and return CSV rows matching the master schema."""
+    """Fetch dividend events for a ticker and return JSON rows matching the master schema."""
     token = ticker.strip().upper()
     if not token:
         return []
@@ -66,22 +67,19 @@ def refresh_ticker_rows(
         record_map.setdefault("ticker", token)
         if not record_map.get("company_name"):
             record_map["company_name"] = DEFAULT_TICKER_NAMES.get(token, "")
-        row = {column: record_map.get(column, "") for column in header}
-        rows.append(row)
+        rows.append(record_map)
 
     # Stable sort by ex-date descending so the most recent event is first
     rows.sort(key=lambda item: item.get("ex_dividend_date") or "", reverse=True)
     return rows
 
 
-def enrich_master_csv(tickers: Sequence[str]) -> None:
+def enrich_master_json(tickers: Sequence[str]) -> None:
     if not tickers:
         print("No tickers supplied; nothing to do.")
         return
 
-    header, existing_rows = _load_master_csv(MASTER_CSV_PATH)
-    if not header:
-        raise RuntimeError("Unable to read header from master CSV; aborting.")
+    existing_rows = _load_master_json(MASTER_JSON_PATH)
 
     # Remove rows for target tickers so we can replace them with fresh data
     tickers_upper = {ticker.strip().upper() for ticker in tickers if ticker.strip()}
@@ -93,7 +91,7 @@ def enrich_master_csv(tickers: Sequence[str]) -> None:
 
     for ticker in sorted(tickers_upper):
         try:
-            new_rows = refresh_ticker_rows(ticker, header, scraper)
+            new_rows = refresh_ticker_rows(ticker, scraper)
         except YahooFinanceError as exc:
             print(f"[WARN] Failed to refresh {ticker}: {exc}")
             missing_tickers.append(ticker)
@@ -112,9 +110,9 @@ def enrich_master_csv(tickers: Sequence[str]) -> None:
         print(f"[OK] Refreshed {ticker} with {len(new_rows)} dividend events.")
 
     updated_rows = retained_rows + refreshed_rows
-    _write_master_csv(MASTER_CSV_PATH, header, updated_rows)
+    _write_master_json(MASTER_JSON_PATH, updated_rows)
 
-    print(f"\nUpdated {MASTER_CSV_PATH} with {len(refreshed_rows)} new rows.")
+    print(f"\nUpdated {MASTER_JSON_PATH} with {len(refreshed_rows)} new rows.")
     if missing_tickers:
         print("The following tickers returned no data (left unchanged):")
         for ticker in missing_tickers:
@@ -122,7 +120,7 @@ def enrich_master_csv(tickers: Sequence[str]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Enrich yahoo_stock_data.csv using Yahoo Finance dividend history.")
+    parser = argparse.ArgumentParser(description="Enrich yahoo_stock_data.json using Yahoo Finance dividend history.")
     parser.add_argument(
         "tickers",
         nargs="+",
@@ -133,7 +131,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    enrich_master_csv(args.tickers)
+    enrich_master_json(args.tickers)
 
 
 if __name__ == "__main__":

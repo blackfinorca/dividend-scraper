@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
+import Select from '../../../components/ui/Select';
 import Icon from '../../../components/AppIcon';
 import TickerAutocomplete from './TickerAutocomplete';
 import { cn } from '../../../utils/cn';
@@ -24,6 +25,9 @@ const ControlPanel = ({
   tickerOptionsError = '',
   initialTicker = '',
   highlightFetchButton = false,
+  eventFilter = '',
+  onEventFilterChange,
+  eventFilterOptions = [],
 }) => {
   const todayIso = getTodayIso();
   const [formData, setFormData] = useState({
@@ -158,7 +162,7 @@ const ControlPanel = ({
   };
 
   return (
-    <div className={cn('bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-xl overflow-hidden', className)}>
+    <div className={cn('bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-xl overflow-visible', className)}>
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-white/70 dark:border-slate-700/70">
         <div className="flex items-center gap-3">
@@ -220,6 +224,19 @@ const ControlPanel = ({
             readOnly
             required
             className="bg-white/50 dark:bg-slate-900/40 border border-white/50 dark:border-slate-700/60"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Select
+            label="Filter by dividend events"
+            value={eventFilter}
+            onChange={(value) => onEventFilterChange?.(value)}
+            options={eventFilterOptions}
+            placeholder="Select events per year"
+            clearable
+            disabled={loading}
+            className="lg:col-span-2"
           />
         </div>
 

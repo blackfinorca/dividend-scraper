@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ApplicationHeader from '../../components/ui/ApplicationHeader';
 import StatusBanner from '../../components/ui/StatusBanner';
@@ -9,8 +9,9 @@ import InsightsPanel from './components/InsightsPanel';
 import { computeAutoTradeHighlights } from '../../utils/tradeInsights';
 import DisclaimerFooter from './components/DisclaimerFooter';
 import { calculateSGXMarginCosts } from '../../utils/sgxMarginCalculator';
-import { fetchSGXDividendData, fetchTickerCatalogue } from '../../utils/dividendDataApi';
+import { fetchDividendEventFrequency, fetchSGXDividendData, fetchTickerCatalogue } from '../../utils/dividendDataApi';
 import ApplicationFooter from '../../components/ui/ApplicationFooter';
+import DividendEventsTable from './components/DividendEventsTable';
 
 const BROKER_FEE_RATE = 0.00127;
 const MINIMUM_FEE = 4.10;
@@ -22,6 +23,13 @@ const getTodayIso = () => {
   const day = String(today.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+const EVENT_FILTER_OPTIONS = [
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+  { value: '4+', label: '4+', description: '4 or more events per year' },
+];
 
 const DividendCaptureAnalyzer = () => {
   const [theme, setTheme] = useState('light');
@@ -39,6 +47,12 @@ const DividendCaptureAnalyzer = () => {
   const [highlightFetchButton, setHighlightFetchButton] = useState(false);
   const [insightsRefreshKey, setInsightsRefreshKey] = useState(0);
   const [searchParams] = useSearchParams();
+  const [eventFilter, setEventFilter] = useState('');
+  const [eventFilterRows, setEventFilterRows] = useState([]);
+  const [eventFilterYear, setEventFilterYear] = useState(null);
+  const [eventFilterLoading, setEventFilterLoading] = useState(false);
+  const [eventFilterError, setEventFilterError] = useState('');
+  const pendingFetchParamsRef = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -65,6 +79,39 @@ const DividendCaptureAnalyzer = () => {
     };
 
     loadCatalogue();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadEventFilters = async () => {
+      setEventFilterLoading(true);
+      setEventFilterError('');
+      try {
+        const payload = await fetchDividendEventFrequency();
+        if (isMounted) {
+          setEventFilterRows(payload?.rows || []);
+          setEventFilterYear(payload?.year ?? null);
+        }
+      } catch (error) {
+        console.warn('Unable to load dividend event filters', error);
+        if (isMounted) {
+          setEventFilterRows([]);
+          setEventFilterYear(null);
+          setEventFilterError('Unable to load dividend event filters. Please try again later.');
+        }
+      } finally {
+        if (isMounted) {
+          setEventFilterLoading(false);
+        }
+      }
+    };
+
+    loadEventFilters();
 
     return () => {
       isMounted = false;
@@ -141,11 +188,13 @@ const DividendCaptureAnalyzer = () => {
     if (!initialTicker) {
       return;
     }
+    const pendingParams = pendingFetchParamsRef.current;
+    pendingFetchParamsRef.current = null;
     handleFetchData({
       ticker: initialTicker,
-      marginAmount: '50000',
-      startDate: DEFAULT_START_DATE,
-      endDate: getTodayIso(),
+      marginAmount: pendingParams?.marginAmount ?? '50000',
+      startDate: pendingParams?.startDate ?? DEFAULT_START_DATE,
+      endDate: pendingParams?.endDate ?? getTodayIso(),
     });
   }, [initialTicker, handleFetchData]);
 
@@ -156,6 +205,36 @@ const DividendCaptureAnalyzer = () => {
     setCurrentParams(null);
     setIsGridFullScreen(false);
   }, []);
+
+  const handleEventTickerSelect = useCallback(
+    (ticker) => {
+      const trimmed = (ticker || '').trim().toUpperCase();
+      if (!trimmed) {
+        return;
+      }
+      const baseParams = currentParams || {
+        marginAmount: '50000',
+        startDate: DEFAULT_START_DATE,
+        endDate: getTodayIso(),
+      };
+      const nextParams = {
+        marginAmount: baseParams.marginAmount ?? '50000',
+        startDate: baseParams.startDate ?? DEFAULT_START_DATE,
+        endDate: baseParams.endDate ?? getTodayIso(),
+      };
+
+      setEventFilter('');
+
+      if (trimmed === initialTicker) {
+        handleFetchData({ ...nextParams, ticker: trimmed });
+        return;
+      }
+
+      pendingFetchParamsRef.current = nextParams;
+      setInitialTicker(trimmed);
+    },
+    [currentParams, handleFetchData, initialTicker]
+  );
 
 
   const handleCellSelect = useCallback((rowId, columnKey, action, offset) => {
@@ -261,6 +340,20 @@ const DividendCaptureAnalyzer = () => {
   }, [gridData, parsedMarginAmount]);
 
   const rowsLoaded = gridData?.length ?? 0;
+  const eventFilterLabel = EVENT_FILTER_OPTIONS.find((option) => option.value === eventFilter)?.label || '';
+  const filteredEventRows = useMemo(() => {
+    if (!eventFilter) {
+      return [];
+    }
+    const targetCount = eventFilter === '4+' ? 4 : parseInt(eventFilter, 10);
+    if (!Number.isFinite(targetCount)) {
+      return [];
+    }
+    const filtered = eventFilterRows.filter((row) =>
+      eventFilter === '4+' ? row.eventCount >= targetCount : row.eventCount === targetCount
+    );
+    return filtered.slice().sort((a, b) => a.ticker.localeCompare(b.ticker));
+  }, [eventFilter, eventFilterRows]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white flex flex-col">
@@ -325,7 +418,21 @@ const DividendCaptureAnalyzer = () => {
             tickerOptionsError={tickerOptionsError}
             initialTicker={initialTicker}
             highlightFetchButton={highlightFetchButton}
+            eventFilter={eventFilter}
+            onEventFilterChange={setEventFilter}
+            eventFilterOptions={EVENT_FILTER_OPTIONS}
           />
+
+          {eventFilter && (
+            <DividendEventsTable
+              rows={filteredEventRows}
+              year={eventFilterYear}
+              filterLabel={eventFilterLabel}
+              loading={eventFilterLoading}
+              error={eventFilterError}
+              onSelectTicker={handleEventTickerSelect}
+            />
+          )}
 
           <InsightsPanel
             topTrades={topTrades}

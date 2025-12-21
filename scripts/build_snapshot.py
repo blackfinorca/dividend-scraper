@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a consolidated SGX dividend snapshot JSON from existing CSV sources."""
+"""Build a consolidated SGX dividend snapshot JSON from existing data sources."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ _DASHBOARD_CSV_CANDIDATES = [
     REPO_ROOT / "public" / "dashboard_data.csv",
     REPO_ROOT / "dashboard_data.csv",
 ]
-YAHOO_CSV_PATH = REPO_ROOT / "public" / "yahoo_stock_data.csv"
+YAHOO_JSON_PATH = REPO_ROOT / "public" / "yahoo_stock_data.json"
 OUTPUT_JSON_PATH = REPO_ROOT / "public" / "sgx_snapshot.json"
 
 OFFSETS = list(range(-10, 31))  # -10 .. +30 inclusive
@@ -145,6 +145,16 @@ def build_price_map(row: Dict[str, str]) -> Dict[str, Optional[str]]:
     return prices
 
 
+def load_yahoo_rows() -> List[Dict[str, Optional[str]]]:
+    if YAHOO_JSON_PATH.exists():
+        with YAHOO_JSON_PATH.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, list):
+            raise RuntimeError(f"Unexpected JSON shape in {YAHOO_JSON_PATH}")
+        return data
+    raise FileNotFoundError(f"Unable to locate Yahoo dividend data at {YAHOO_JSON_PATH}.")
+
+
 def load_upcoming_rows() -> Dict[str, Dict[str, Optional[str]]]:
     dashboard_path = next((path for path in _DASHBOARD_CSV_CANDIDATES if path.exists()), _DASHBOARD_CSV_CANDIDATES[0])
     upcoming: Dict[str, Dict[str, Optional[str]]] = {}
@@ -177,44 +187,45 @@ def build_snapshot() -> Dict[str, object]:
     upcoming_lookup = load_upcoming_rows()
     ticker_entries: Dict[str, Dict[str, object]] = {}
 
-    with YAHOO_CSV_PATH.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            ticker = normalise_string(get_row_value(row, "Ticker")).upper()
-            if not ticker:
-                continue
+    yahoo_rows = load_yahoo_rows()
+    for row in yahoo_rows:
+        ticker = normalise_string(get_row_value(row, "Ticker", "ticker")).upper()
+        if not ticker:
+            continue
 
-            entry = ticker_entries.setdefault(
-                ticker,
-                {
-                    "ticker": ticker,
-                    "companyName": normalise_string(get_row_value(row, "Company Name")),
-                    "events": [],
-                    "upcoming": None,
-                },
-            )
+        entry = ticker_entries.setdefault(
+            ticker,
+            {
+                "ticker": ticker,
+                "companyName": normalise_string(get_row_value(row, "Company Name", "company_name")),
+                "events": [],
+                "upcoming": None,
+            },
+        )
 
-            if not entry["companyName"]:
-                company_name = get_row_value(row, "Company Name", "company_name")
-                if company_name:
-                    entry["companyName"] = normalise_string(company_name)
+        if not entry["companyName"]:
+            company_name = get_row_value(row, "Company Name", "company_name")
+            if company_name:
+                entry["companyName"] = normalise_string(company_name)
 
-            ex_date = normalise_string(get_row_value(row, "Ex-Dividend Date", "ex_dividend_date"))
-            if ex_date:
-                dividend_amount = parse_amount(get_row_value(row, "Dividend Amount", "dividend_amount"))
-                event = {
-                    "exDate": ex_date,
-                    "dividendAmount": dividend_amount,
-                    "dividendAmountLabel": (
-                        f"{dividend_amount:.4f}"
-                        if dividend_amount is not None
-                        else normalise_string(get_row_value(row, "Dividend Amount", "dividend_amount")) or None
-                    ),
-                    "exDatePrice": parse_amount(get_row_value(row, "Ex-Date Price", "ex_dividend_price")),
-                    "exDatePriceLabel": format_price(parse_amount(get_row_value(row, "Ex-Date Price", "ex_dividend_price"))),
-                    "prices": build_price_map(row),
-                }
-                entry["events"].append(event)
+        ex_date = normalise_string(get_row_value(row, "Ex-Dividend Date", "ex_dividend_date"))
+        if ex_date:
+            dividend_amount = parse_amount(get_row_value(row, "Dividend Amount", "dividend_amount"))
+            event = {
+                "exDate": ex_date,
+                "dividendAmount": dividend_amount,
+                "dividendAmountLabel": (
+                    f"{dividend_amount:.4f}"
+                    if dividend_amount is not None
+                    else normalise_string(get_row_value(row, "Dividend Amount", "dividend_amount")) or None
+                ),
+                "exDatePrice": parse_amount(get_row_value(row, "Ex-Date Price", "ex_dividend_price")),
+                "exDatePriceLabel": format_price(
+                    parse_amount(get_row_value(row, "Ex-Date Price", "ex_dividend_price"))
+                ),
+                "prices": build_price_map(row),
+            }
+            entry["events"].append(event)
 
     # Ensure every ticker referenced in upcoming data exists in the snapshot.
     for ticker, info in upcoming_lookup.items():
@@ -231,7 +242,7 @@ def build_snapshot() -> Dict[str, object]:
             entry["companyName"] = info["companyName"]
         entry["upcoming"] = info
 
-    # Attach upcoming info for tickers derived from the CSV dataset if not already set.
+    # Attach upcoming info for tickers derived from the dividend dataset if not already set.
     for ticker, entry in ticker_entries.items():
         if entry.get("upcoming") is None:
             entry["upcoming"] = upcoming_lookup.get(ticker)

@@ -212,6 +212,18 @@ const DataGrid = ({
     return `${sign}${value?.toFixed(2)}%`;
   };
 
+  const sortedData = useMemo(() => {
+    if (!Array.isArray(data)) return [];
+    return data.slice().sort((a, b) => {
+      const aDate = new Date(a.exDate || '');
+      const bDate = new Date(b.exDate || '');
+      if (Number.isNaN(aDate.getTime()) && Number.isNaN(bDate.getTime())) return 0;
+      if (Number.isNaN(aDate.getTime())) return 1;
+      if (Number.isNaN(bDate.getTime())) return -1;
+      return bDate.getTime() - aDate.getTime(); // newest first
+    });
+  }, [data]);
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e?.key === 'Escape') {
@@ -278,25 +290,25 @@ const DataGrid = ({
             <div className="flex">
               {/* Fixed columns */}
               <div className="flex bg-white/80 dark:bg-slate-900/80">
-                <div className="w-24 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
+                <div className="w-[84px] px-2 py-2 text-[11px] font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Ex-Date
                 </div>
-                <div className="w-20 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
+                <div className="w-[72px] px-2 py-2 text-[11px] font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Div/Share
                 </div>
-                <div className="w-16 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
+                <div className="w-[56px] px-2 py-2 text-[11px] font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Qty
                 </div>
-                <div className="w-24 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
+                <div className="w-[118px] px-2 py-2 text-[11px] font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Trade Fee (Open&nbsp;&amp;&nbsp;Close)
                 </div>
-                <div className="w-20 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
+                <div className="w-[92px] px-2 py-2 text-[11px] font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Margin Fee
                 </div>
-                <div className="w-24 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
+                <div className="w-[118px] px-2 py-2 text-[11px] font-semibold text-slate-900 dark:text-white border-r border-white/70 dark:border-slate-700/70">
                   Total Cost
                 </div>
-                <div className="w-[120px] px-3 py-2 text-xs font-medium text-foreground border-r border-border text-center">
+                <div className="w-[110px] px-2 py-2 text-[11px] font-medium text-foreground border-r border-border text-center">
                   Trend
                 </div>
               </div>
@@ -307,7 +319,7 @@ const DataGrid = ({
                   <div
                     key={column?.key}
                     className={`
-                      w-16 px-2 py-2 text-xs font-medium text-center border-r border-border
+                      w-[56px] px-2 py-2 text-[11px] font-medium text-center border-r border-border
                       ${column?.isExDate 
                         ? 'bg-amber-100 text-foreground font-semibold' 
                         : 'text-muted-foreground'
@@ -323,7 +335,7 @@ const DataGrid = ({
 
           {/* Data Rows */}
           <div className="flex-1 overflow-y-auto">
-            {data?.map((row, rowIndex) => {
+            {sortedData?.map((row, rowIndex) => {
               const rowSelections = selectedCells?.[row?.id] || {};
               const buyOffset = rowSelections?.buy?.offset;
               const sellOffset = rowSelections?.sell?.offset;
@@ -366,17 +378,17 @@ const DataGrid = ({
                 >
                   {/* Fixed columns */}
                   <div className="flex bg-card/80 backdrop-blur-sm">
-                    <div className="w-24 px-3 py-2 text-xs font-data text-foreground border-r border-border">
+                    <div className="w-[84px] px-2 py-2 text-[11px] font-data text-foreground border-r border-border">
                       {new Date(row.exDate)?.toLocaleDateString('en-GB')}
                     </div>
-                    <div className="w-20 px-3 py-2 text-xs font-data text-foreground border-r border-border">
+                    <div className="w-[72px] px-2 py-2 text-[11px] font-data text-foreground border-r border-border">
                       ${row?.dividendPerShare?.toFixed(3) || '—'}
                     </div>
-                    <div className="w-16 px-3 py-2 text-xs font-data text-foreground border-r border-border">
+                    <div className="w-[56px] px-2 py-2 text-[11px] font-data text-foreground border-r border-border">
                       {pnlData?.quantity || '—'}
                     </div>
                     <div className={`
-                      w-24 px-3 py-2 text-xs font-data border-r border-border
+                      w-[118px] px-2 py-2 text-[11px] font-data border-r border-border
                       ${pnlData ? 'text-foreground' : ''}
                     `}>
                       {pnlData ? (
@@ -389,7 +401,7 @@ const DataGrid = ({
                       ) : '—'}
                     </div>
                     <div className={`
-                      w-20 px-3 py-2 text-xs font-data border-r border-border
+                      w-[92px] px-2 py-2 text-[11px] font-data border-r border-border
                       ${pnlData ? 'text-foreground' : ''}
                     `}>
                       {pnlData ? (
@@ -402,7 +414,7 @@ const DataGrid = ({
                       ) : '—'}
                     </div>
                     <div className={`
-                      w-24 px-3 py-2 text-xs font-data border-r border-border font-medium
+                      w-[118px] px-2 py-2 text-[11px] font-data border-r border-border font-medium
                       ${pnlData?.totalCost > 0 ? 'text-success' : pnlData?.totalCost < 0 ? 'text-error' : 'text-foreground'}
                     `}>
                       {pnlData ? (
@@ -414,7 +426,7 @@ const DataGrid = ({
                         </div>
                       ) : '—'}
                     </div>
-                    <div className="w-[120px] px-3 py-2 border-r border-border flex items-center justify-center">
+                    <div className="w-[110px] px-2 py-2 border-r border-border flex items-center justify-center">
                       {hasSparklinePoints ? (
                         <svg
                           width={SPARKLINE_WIDTH}
@@ -513,7 +525,7 @@ const DataGrid = ({
                         <div
                           key={column?.key}
                           className={`
-                            w-16 px-2 py-2 text-xs font-data text-center border-r border-border
+                            w-[56px] px-2 py-2 text-[11px] font-data text-center border-r border-border
                             relative cursor-pointer transition-all duration-150
                             ${column?.isExDate ? 'bg-amber-50' : ''}
                             ${canSelect ? 'hover:bg-accent hover:text-accent-foreground' : 'cursor-not-allowed'}

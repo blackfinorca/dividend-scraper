@@ -2,8 +2,10 @@ import { csvParse } from 'd3-dsv';
 
 const OFFSETS = Array.from({ length: 41 }, (_, idx) => idx - 10); // -10 .. +30
 const SNAPSHOT_URL = '/sgx_snapshot.json';
-const YAHOO_CSV_URL = '/yahoo_stock_data.csv';
+const YAHOO_JSON_URL = '/yahoo_stock_data.json';
 const DASHBOARD_CSV_URL = '/dashboard_data.csv';
+const UPCOMING_JSON_URL = '/dividends_upcoming.json';
+const DIVIDENDS_SG_UPCOMING_URL = 'https://www.dividends.sg/dividend/coming';
 const TICKER_CATALOGUE_STORAGE_KEY = 'sgDividendTickerCatalogue';
 
 const buildPriceKey = (offset) => `D${offset >= 0 ? '+' : ''}${offset}`;
@@ -104,6 +106,156 @@ const getRowValue = (accessor, ...keys) => {
 let snapshotCache = null;
 let snapshotPromise = null;
 let yahooRowsCache = null;
+
+const normaliseHeader = (text) =>
+  (text || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9 ]+/g, '')
+    .trim();
+
+const parseFirstNumber = (text) => {
+  if (!text) return null;
+  const match = String(text).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const numeric = parseFloat(match[0]);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const parseYieldField = (text) => {
+  const match = String(text || '').match(/-?\d+(?:\.\d+)?\s*%/);
+  if (!match) return null;
+  const numeric = parseFloat(match[0]);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const parseAmountField = (text) => {
+  if (!text) return { amount: null, currency: '' };
+  const cleaned = String(text).trim();
+  const currencyMatch = cleaned.match(/^[A-Za-z]{3}/);
+  const amount = parseFirstNumber(cleaned);
+  return {
+    amount,
+    currency: currencyMatch ? currencyMatch[0].toUpperCase() : '',
+  };
+};
+
+const parseDateField = (text) => {
+  if (!text) return null;
+  const trimmed = String(text).trim();
+  if (!trimmed) return null;
+  const isoLike = trimmed.replace(/\//g, '-');
+  const date = new Date(isoLike);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+};
+
+const buildProxyUrl = (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+
+const fetchHtmlWithFallbacks = async (urls) => {
+  const attempts = Array.isArray(urls) ? urls : [urls];
+  let lastError = null;
+
+  for (const url of attempts) {
+    try {
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) {
+        lastError = new Error(`Fetch failed with status ${response.status}`);
+        continue;
+      }
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+      // Try next fallback
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error('Unable to fetch HTML');
+};
+
+const loadFallbackUpcomingJson = async () => {
+  try {
+    const response = await fetch(UPCOMING_JSON_URL, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`Fallback JSON unavailable (${response.status})`);
+    }
+    const data = await response.json();
+    if (!Array.isArray(data)) return [];
+    return data
+      .map((row) => ({
+        ticker: (row.ticker || '').toUpperCase(),
+        companyName: row.company || '',
+        exDate: row.nextDividend || '',
+        dividendAmount: parseFirstNumber(row.amount),
+        dividendAmountLabel: row.amount || null,
+        dividendPayDate: null,
+        yieldPercentage: parseYieldField(row.yield),
+        yieldLabel: row.yield || null,
+      }))
+      .filter((row) => row.ticker && row.exDate);
+  } catch (error) {
+    console.warn('Unable to load fallback upcoming dividends JSON.', error);
+    return [];
+  }
+};
+
+const computeLatestYearCounts = (snapshot) => {
+  const map = new Map();
+  if (!snapshot?.tickers?.length) {
+    return map;
+  }
+  const now = new Date();
+  const targetYear = now.getFullYear() - 1;
+  snapshot.tickers.forEach((entry) => {
+    const ticker = (entry?.ticker || '').toUpperCase();
+    if (!ticker) {
+      return;
+    }
+    const events = Array.isArray(entry.events) ? entry.events : [];
+    const count = events.reduce((total, event) => {
+      const date = new Date(event.exDate);
+      if (Number.isNaN(date.getTime())) {
+        return total;
+      }
+      return date.getFullYear() === targetYear ? total + 1 : total;
+    }, 0);
+    map.set(ticker, count);
+  });
+  return map;
+};
+
+const buildLatestYearEventRows = (snapshot) => {
+  const now = new Date();
+  const targetYear = now.getFullYear() - 1;
+  const counts = computeLatestYearCounts(snapshot);
+  const rows = (snapshot?.tickers || [])
+    .map((entry) => {
+      const ticker = (entry?.ticker || '').toUpperCase();
+      if (!ticker) {
+        return null;
+      }
+      const upcoming = entry?.upcoming || null;
+      const yieldValue = Number.isFinite(upcoming?.yieldValue) ? upcoming.yieldValue : null;
+      const yieldLabelRaw = upcoming?.yieldLabel ? String(upcoming.yieldLabel).trim() : '';
+      const yieldLabel =
+        yieldLabelRaw || (Number.isFinite(yieldValue) ? `${yieldValue.toFixed(2)}%` : '');
+      const nextDividendDate = upcoming?.exDate ? String(upcoming.exDate).trim() : '';
+
+      return {
+        ticker,
+        eventCount: counts.get(ticker) ?? 0,
+        yieldLabel,
+        nextDividendDate,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.ticker.localeCompare(b.ticker));
+
+  return { year: targetYear, rows };
+};
 
 const normalizePriceMap = (rawPrices) => {
   const prices = {};
@@ -287,6 +439,81 @@ const parsePrice = (value) => {
   if (value === undefined || value === null || value === '') return null;
   const numeric = parseFloat(value);
   return Number.isFinite(numeric) ? numeric : null;
+};
+
+const parseDividendsSgUpcoming = (html) => {
+  if (!html) return [];
+
+  const parser = typeof DOMParser !== 'undefined' ? new DOMParser() : null;
+  const doc = parser ? parser.parseFromString(html, 'text/html') : null;
+  const table = doc?.querySelector('table');
+
+  if (!table) {
+    return [];
+  }
+
+  const headerCells = Array.from(table.querySelectorAll('thead tr th'));
+  const firstRowTh = !headerCells.length ? Array.from(table.querySelectorAll('tr th')) : [];
+  const headers = headerCells.length ? headerCells : firstRowTh;
+  const headerMap = new Map();
+
+  headers.forEach((th, index) => {
+    const key = normaliseHeader(th.textContent || '');
+    if (!key) return;
+    if (key.includes('company')) headerMap.set('company', index);
+    if (key.includes('ticker') || key.includes('symbol')) headerMap.set('ticker', index);
+    if (key.includes('price')) headerMap.set('price', index);
+    if (key.includes('yield')) headerMap.set('yield', index);
+    if (key.includes('amount') || key.includes('dividend')) headerMap.set('amount', index);
+    if (key.includes('next') || key.includes('ex')) headerMap.set('nextDividend', index);
+  });
+
+  const rows = Array.from(table.querySelectorAll('tbody tr')); // prefer tbody
+  const fallbackRows = rows.length ? [] : Array.from(table.querySelectorAll('tr')).slice(1);
+  const targetRows = rows.length ? rows : fallbackRows;
+
+  return targetRows
+    .map((row) => {
+      const cells = Array.from(row.querySelectorAll('td')).map((td) => (td.textContent || '').trim());
+      if (!cells.length) return null;
+
+      const getCell = (key) => {
+        const index = headerMap.get(key);
+        if (index === undefined) return '';
+        return cells[index] || '';
+      };
+
+      const companyName = getCell('company');
+      const ticker = (getCell('ticker') || '').toUpperCase();
+      const priceRaw = getCell('price');
+      const yieldRaw = getCell('yield');
+      const amountRaw = getCell('amount');
+      const nextDividendRaw = getCell('nextDividend');
+
+      const { amount: dividendAmount, currency: dividendCurrency } = parseAmountField(amountRaw);
+      const yieldValue = parseYieldField(yieldRaw);
+      const priceValue = parseFirstNumber(priceRaw);
+      const exDate = parseDateField(nextDividendRaw);
+
+      if (!exDate || !ticker) {
+        return null;
+      }
+
+      return {
+        ticker,
+        companyName,
+        exDate,
+        dividendAmount,
+        dividendAmountLabel: amountRaw || (Number.isFinite(dividendAmount) ? dividendAmount.toFixed(4) : null),
+        dividendCurrency,
+        dividendPayDate: null,
+        yieldPercentage: yieldValue,
+        yieldLabel: yieldRaw || (Number.isFinite(yieldValue) ? `${yieldValue.toFixed(2)}%` : null),
+        price: priceValue,
+        priceLabel: priceRaw || (Number.isFinite(priceValue) ? priceValue.toFixed(4) : null),
+      };
+    })
+    .filter(Boolean);
 };
 
 const parsePercentageValue = (value) => {
@@ -738,45 +965,120 @@ export async function fetchTickerCatalogue({ forceRefresh = false } = {}) {
   }
 }
 
-export async function fetchUpcomingDividends({ lookaheadDays = 30 } = {}) {
+export async function fetchDividendEventFrequency() {
   const snapshot = await loadSnapshot();
+  return buildLatestYearEventRows(snapshot);
+}
 
+export async function fetchUpcomingDividends({ lookaheadDays = 60 } = {}) {
   const today = new Date();
   const horizon = new Date(today);
   horizon.setDate(horizon.getDate() + lookaheadDays);
 
-  const results = (snapshot.tickers || [])
-    .map((entry) => {
-      const upcoming = entry.upcoming;
-      if (!upcoming || !upcoming.exDate) {
-        return null;
-      }
-      const upcomingDate = new Date(upcoming.exDate);
-      if (Number.isNaN(upcomingDate.getTime())) {
-        return null;
-      }
-      if (upcomingDate < today || upcomingDate > horizon) {
-        return null;
-      }
-      return {
-        ticker: entry.ticker,
-        companyName: upcoming.companyName || entry.companyName || '',
-        exDate: upcoming.exDate,
-        dividendAmount: upcoming.amountValue,
-        dividendAmountLabel:
-          upcoming.amountLabel ||
-          (Number.isFinite(upcoming.amountValue) ? upcoming.amountValue.toFixed(4) : null),
-        dividendPayDate: upcoming.payDate || null,
-        yieldPercentage: upcoming.yieldValue,
-        yieldLabel:
-          upcoming.yieldLabel ||
-          (Number.isFinite(upcoming.yieldValue) ? `${upcoming.yieldValue.toFixed(2)}%` : null),
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => itemDateCompare(new Date(a.exDate), new Date(b.exDate)));
+  let prevYearCounts = new Map();
+  try {
+    const snapshot = await loadSnapshot();
+    prevYearCounts = computeLatestYearCounts(snapshot);
+  } catch (error) {
+    console.warn('Unable to load snapshot for previous-year counts.', error);
+  }
 
-  return results;
+  const applyPrevYearCounts = (entries) =>
+    entries.map((entry) => ({
+      ...entry,
+      prevYearEventCount: prevYearCounts.get((entry.ticker || '').toUpperCase()) ?? 0,
+    }));
+
+  const filterAndSort = (rows) => {
+    const filtered = rows
+      .filter((entry) => {
+        const date = new Date(entry.exDate);
+        if (Number.isNaN(date.getTime())) return false;
+        if (date < today || date > horizon) return false;
+        return true;
+      })
+      .map((entry) => ({
+        ticker: entry.ticker,
+        companyName: entry.companyName || '',
+        exDate: entry.exDate,
+        dividendAmount: entry.dividendAmount,
+        dividendAmountLabel: entry.dividendAmountLabel,
+        dividendPayDate: entry.dividendPayDate || null,
+        yieldPercentage: entry.yieldPercentage,
+        yieldLabel: entry.yieldLabel,
+      }));
+
+    const seen = new Set();
+    const deduped = filtered.filter((entry) => {
+      const key = `${entry.ticker}-${entry.exDate}-${entry.dividendAmountLabel || ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    return applyPrevYearCounts(
+      deduped.sort((a, b) => itemDateCompare(new Date(a.exDate), new Date(b.exDate)))
+    );
+  };
+
+  // Load fallback JSON first to guarantee tiles render even if live scrape fails
+  const fallback = await loadFallbackUpcomingJson();
+  if (fallback.length) {
+    const processed = fallback.map((entry) => ({
+      ...entry,
+      exDate: entry.exDate || entry.nextDividend || entry.dividendPayDate || '',
+    }));
+    const result = filterAndSort(processed);
+    if (result.length) {
+      return result;
+    }
+    // No entries within lookahead, return entire fallback dataset
+    return applyPrevYearCounts(
+      processed.map((entry) => ({
+        ticker: entry.ticker,
+        companyName: entry.companyName || '',
+        exDate: entry.exDate,
+        dividendAmount: entry.dividendAmount,
+        dividendAmountLabel: entry.dividendAmountLabel,
+        dividendPayDate: entry.dividendPayDate || null,
+        yieldPercentage: entry.yieldPercentage,
+        yieldLabel: entry.yieldLabel,
+      }))
+    );
+  }
+
+  try {
+    const html = await fetchHtmlWithFallbacks([
+      DIVIDENDS_SG_UPCOMING_URL,
+      buildProxyUrl(DIVIDENDS_SG_UPCOMING_URL),
+      'https://r.jina.ai/http://www.dividends.sg/dividend/coming',
+    ]);
+    const parsed = parseDividendsSgUpcoming(html);
+    const result = filterAndSort(parsed);
+    if (result.length) {
+      return result;
+    }
+  } catch (error) {
+    console.warn('Failed to scrape dividends.sg upcoming data:', error);
+  }
+
+  // If everything fails, return any fallback rows without date filtering
+  if (fallback.length) {
+    return applyPrevYearCounts(
+      fallback.map((entry) => ({
+        ticker: entry.ticker,
+        companyName: entry.companyName || '',
+        exDate: entry.exDate || entry.nextDividend || '',
+        dividendAmount: entry.dividendAmount,
+        dividendAmountLabel: entry.dividendAmountLabel || entry.amount || null,
+        dividendPayDate: entry.dividendPayDate || null,
+        yieldPercentage: entry.yieldPercentage,
+        yieldLabel: entry.yieldLabel || entry.yield,
+      }))
+    );
+  }
+
+  throw new Error('Unable to load upcoming dividends');
 }
 
 export const fetchDashboardTickers = fetchTickerCatalogue;
@@ -835,19 +1137,30 @@ export async function fetchLatestDividendSnapshot(ticker) {
 }
 
 async function loadCsvRows(url) {
-  if (url === YAHOO_CSV_URL && Array.isArray(yahooRowsCache)) {
+  if (url === YAHOO_JSON_URL && Array.isArray(yahooRowsCache)) {
     return yahooRowsCache;
   }
+
   const response = await fetch(url, { cache: 'no-store' });
   if (!response.ok) {
-    throw new Error(`Failed to load CSV data from ${url}`);
+    throw new Error(`Failed to load data from ${url}`);
   }
-  const text = await response.text();
-  if (!text || !text.trim()) {
-    return [];
+
+  const contentType = response.headers.get('content-type') || '';
+  let rows = [];
+
+  if (contentType.includes('application/json') || url.endsWith('.json')) {
+    const jsonData = await response.json();
+    rows = Array.isArray(jsonData) ? jsonData : [];
+  } else {
+    const text = await response.text();
+    if (!text || !text.trim()) {
+      return [];
+    }
+    rows = csvParse(text);
   }
-  const rows = csvParse(text);
-  if (url === YAHOO_CSV_URL) {
+
+  if (url === YAHOO_JSON_URL) {
     yahooRowsCache = rows;
   }
   return rows;
@@ -855,7 +1168,7 @@ async function loadCsvRows(url) {
 
 async function buildSnapshotFromCsv() {
   const [yahooRows, dashboardRows] = await Promise.all([
-    loadCsvRows(YAHOO_CSV_URL),
+    loadCsvRows(YAHOO_JSON_URL),
     loadCsvRows(DASHBOARD_CSV_URL).catch((error) => {
       console.warn('Unable to load dashboard CSV data. Continuing without dashboard enrichment.', error);
       return [];
@@ -973,7 +1286,7 @@ async function buildSnapshotFromCsv() {
 }
 
 async function loadTickerEventsFromCsv(ticker) {
-  const rows = await loadCsvRows(YAHOO_CSV_URL);
+  const rows = await loadCsvRows(YAHOO_JSON_URL);
   const canonicalTicker = normaliseInputTicker(ticker);
   const events = [];
   let companyName = '';

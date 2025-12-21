@@ -7,7 +7,7 @@ plain tickers (e.g. ``D05``) and automatically targets the corresponding Yahoo s
 
 Usage:
     python data_fetch.py D05
-    python data_fetch.py --file tickers.txt --output public/yahoo_stock_data.csv
+    python data_fetch.py --file tickers.txt --output public/yahoo_stock_data.json
 
 If no tickers are provided, a curated SGX list is used by default.
 """
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
-import csv
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -34,7 +34,8 @@ REQUEST_HEADERS = {
 }
 PRE_EVENT_DAYS = 10
 POST_EVENT_DAYS = 30
-DEFAULT_OUTPUT_PATH = Path(__file__).resolve().parent / "public" / "yahoo_stock_data.csv"
+DEFAULT_OUTPUT_PATH = Path(__file__).resolve().parent / "public" / "yahoo_stock_data.json"
+UPCOMING_JSON_PATH = Path(__file__).resolve().parent / "public" / "dividends_upcoming.json"
 
 TickerListEntry = Tuple[str, str]
 DEFAULT_TICKERS: List[TickerListEntry] = [
@@ -99,7 +100,11 @@ DEFAULT_TICKERS: List[TickerListEntry] = [
     ("1B1", "HC Surgical Specialists Limited"),
     ("C33", "Chuan Hup Holdings Limited"),
 ]
-DEFAULT_TICKER_NAMES: Dict[str, str] = {symbol: name for symbol, name in DEFAULT_TICKERS}
+def _build_ticker_name_map(entries: Sequence[TickerListEntry]) -> Dict[str, str]:
+    return {symbol: name for symbol, name in entries if name}
+
+
+DEFAULT_TICKER_NAMES: Dict[str, str] = _build_ticker_name_map(DEFAULT_TICKERS)
 
 
 class YahooFinanceError(RuntimeError):
@@ -401,7 +406,7 @@ def _fill_missing_offsets(offsets: Dict[int, float], pre: int, post: int) -> Non
 
 
 def _read_tickers(
-    args: argparse.Namespace, default_tickers: Sequence[TickerListEntry]
+    args: argparse.Namespace, base_tickers: Sequence[TickerListEntry]
 ) -> List[str]:
     tickers: List[str] = []
 
@@ -418,15 +423,15 @@ def _read_tickers(
     if args.tickers:
         tickers.extend(args.tickers)
 
+    if not tickers:
+        tickers = [symbol for symbol, _ in base_tickers]
+
     normalised: List[str] = []
     for token in tickers:
         symbol = token.strip()
         if not symbol:
             continue
         normalised.append(symbol.upper())
-
-    if not normalised:
-        normalised = [symbol for symbol, _ in default_tickers]
 
     deduped: List[str] = []
     seen = set()
@@ -438,13 +443,11 @@ def _read_tickers(
     return deduped
 
 
-def _write_csv(path: Path, rows: List[DividendRecord]) -> None:
+def _write_json(path: Path, rows: List[DividendRecord]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].asdict().keys()))
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row.asdict())
+    payload = [row.asdict() for row in rows]
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -457,10 +460,34 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "-o",
         "--output",
         default=str(DEFAULT_OUTPUT_PATH),
-        help="CSV output path.",
+        help="JSON output path.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging.")
     return parser.parse_args(argv)
+
+
+def _load_upcoming_rows() -> List[Dict]:
+    if not UPCOMING_JSON_PATH.exists():
+        return []
+    try:
+        with UPCOMING_JSON_PATH.open("r", encoding="utf-8") as fp:
+            data = json.load(fp)
+        return data if isinstance(data, list) else []
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Unable to load upcoming dividends JSON: %s", exc)
+        return []
+
+def _merge_upcoming_tickers(
+    default_tickers: Sequence[TickerListEntry], upcoming_rows: List[Dict]
+) -> List[TickerListEntry]:
+    merged = list(default_tickers)
+    seen = {symbol for symbol, _ in default_tickers}
+    for row in upcoming_rows:
+        ticker = (row.get("ticker") or "").strip().upper()
+        if ticker and ticker not in seen:
+            merged.append((ticker, row.get("company") or ""))
+            seen.add(ticker)
+    return merged
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -470,13 +497,16 @@ def main(argv: Optional[List[str]] = None) -> None:
         format="%(levelname)s: %(message)s",
     )
 
-    tickers = _read_tickers(args, DEFAULT_TICKERS)
+    upcoming_rows = _load_upcoming_rows()
+    merged_defaults = _merge_upcoming_tickers(DEFAULT_TICKERS, upcoming_rows)
+    ticker_name_map = _build_ticker_name_map(merged_defaults)
+    tickers = _read_tickers(args, merged_defaults)
     scraper = YahooFinanceDividendScraper()
 
     records: List[DividendRecord] = []
     for ticker in tickers:
         try:
-            display_name = DEFAULT_TICKER_NAMES.get(ticker, "")
+            display_name = ticker_name_map.get(ticker, "")
             if display_name:
                 logging.info("Fetching dividends for %s (%s)", ticker, display_name)
             else:
@@ -488,7 +518,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     if not records:
         raise SystemExit("No dividend data downloaded. See log for details.")
 
-    _write_csv(Path(args.output), records)
+    _write_json(Path(args.output), records)
     logging.info("Saved %d dividend records to %s", len(records), args.output)
 
 

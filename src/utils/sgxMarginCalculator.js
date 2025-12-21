@@ -31,7 +31,8 @@ export const calculateSGXMarginCosts = ({
     throw new Error('Margin ratio must be between 0 and 1');
   }
   
-  if (!holdingDays || holdingDays < 0) {
+  const normalizedHoldingDays = Number(holdingDays);
+  if (!Number.isFinite(normalizedHoldingDays) || normalizedHoldingDays < 0) {
     throw new Error('Holding days must be greater than or equal to 0');
   }
   
@@ -43,7 +44,7 @@ export const calculateSGXMarginCosts = ({
   // Apply the SGX margin formulas
   const borrowed = tradeValue * marginRatio;
   const dailyInterest = (borrowed * marginInterestRate) / 365;
-  const financingCost = dailyInterest * holdingDays;
+  const financingCost = dailyInterest * normalizedHoldingDays;
   const totalFees = openFee + closeFee;
   const totalCost = totalFees + financingCost;
   
@@ -54,7 +55,7 @@ export const calculateSGXMarginCosts = ({
     tradeValue: parseFloat(tradeValue?.toFixed(2)),
     marginRatio: parseFloat(marginRatio?.toFixed(4)),
     borrowed: parseFloat(borrowed?.toFixed(2)),
-    holdingDays: parseInt(holdingDays),
+    holdingDays: parseInt(normalizedHoldingDays),
     dailyInterest: parseFloat(dailyInterest?.toFixed(4)),
     financingCost: parseFloat(financingCost?.toFixed(2)),
     openFees: parseFloat(openFee?.toFixed(2)),
