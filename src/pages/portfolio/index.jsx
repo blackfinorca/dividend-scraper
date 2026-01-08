@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import ApplicationHeader from '../../components/ui/ApplicationHeader';
 import StatusBanner from '../../components/ui/StatusBanner';
 import Input from '../../components/ui/Input';
-import { fetchPortfolioSummary } from '../../utils/dividendDataApi';
+import Select from '../../components/ui/Select';
+import { fetchDividendEventFrequency, fetchPortfolioSummary } from '../../utils/dividendDataApi';
 import ApplicationFooter from '../../components/ui/ApplicationFooter';
 
 const formatPercentage = (value) => {
@@ -53,8 +54,23 @@ const Portfolio = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [portfolioRows, setPortfolioRows] = useState([]);
   const [yieldThreshold, setYieldThreshold] = useState('');
+  const [eventFilter, setEventFilter] = useState('');
+  const [eventFilterRows, setEventFilterRows] = useState([]);
+  const [eventFilterYear, setEventFilterYear] = useState(null);
+  const [eventFilterLoading, setEventFilterLoading] = useState(false);
+  const [eventFilterError, setEventFilterError] = useState('');
   const [sortConfig, setSortConfig] = useState({ column: 'marketCap', direction: 'desc' });
   const navigate = useNavigate();
+
+  const EVENT_FILTER_OPTIONS = useMemo(
+    () => [
+      { value: '1', label: '1' },
+      { value: '2', label: '2' },
+      { value: '3', label: '3' },
+      { value: '4+', label: '4+', description: '4 or more events per year' },
+    ],
+    []
+  );
 
   const handleThemeToggle = useCallback(() => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
@@ -90,6 +106,38 @@ const Portfolio = () => {
     };
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadEventCounts = async () => {
+      setEventFilterLoading(true);
+      setEventFilterError('');
+      try {
+        const payload = await fetchDividendEventFrequency();
+        if (isMounted) {
+          setEventFilterRows(payload?.rows || []);
+          setEventFilterYear(payload?.year ?? null);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setEventFilterRows([]);
+          setEventFilterYear(null);
+          setEventFilterError('Unable to load dividend event counts.');
+        }
+      } finally {
+        if (isMounted) {
+          setEventFilterLoading(false);
+        }
+      }
+    };
+
+    loadEventCounts();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const filteredRows = useMemo(() => {
     let rows = [...portfolioRows];
 
@@ -107,6 +155,19 @@ const Portfolio = () => {
         rows = rows.filter((row) => {
           const yieldValue = row.averageYield;
           return yieldValue !== null && !Number.isNaN(yieldValue) && yieldValue > thresholdValue;
+        });
+      }
+    }
+
+    if (eventFilter) {
+      const targetCount = eventFilter === '4+' ? 4 : parseInt(eventFilter, 10);
+      if (Number.isFinite(targetCount)) {
+        const lookup = new Map(
+          eventFilterRows.map((entry) => [entry.ticker, entry.eventCount ?? 0])
+        );
+        rows = rows.filter((row) => {
+          const count = lookup.get(row.ticker) ?? 0;
+          return eventFilter === '4+' ? count >= targetCount : count === targetCount;
         });
       }
     }
@@ -170,7 +231,7 @@ const Portfolio = () => {
     }
 
     return rows;
-  }, [portfolioRows, searchTerm, yieldThreshold, sortConfig]);
+  }, [portfolioRows, searchTerm, yieldThreshold, eventFilter, eventFilterRows, sortConfig]);
 
   const sortOptions = useMemo(() => [
     { value: 'marketCap', label: 'Market Cap' },
@@ -253,12 +314,12 @@ const Portfolio = () => {
             />
           )}
 
-          <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-lg p-5">
+          <div className="relative z-20 overflow-visible bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border border-white/80 dark:border-slate-700/80 rounded-2xl shadow-lg p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="text-sm text-slate-600 dark:text-slate-300">
                 Showing <span className="font-semibold text-slate-900 dark:text-white">{filteredCount}</span> of {totalTickers} tickers
               </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 flex-1">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 flex-1">
                 <Input
                   placeholder="Search by ticker or company"
                   value={searchTerm}
@@ -273,6 +334,16 @@ const Portfolio = () => {
                   value={yieldThreshold}
                   onChange={(event) => setYieldThreshold(event.target.value)}
                   className="bg-white/70 dark:bg-slate-900/50 border border-white/70 dark:border-slate-700/70 focus:ring-2 focus:ring-blue-500"
+                />
+                <Select
+                  value={eventFilter}
+                  onChange={setEventFilter}
+                  options={EVENT_FILTER_OPTIONS}
+                  placeholder={eventFilterYear ? `Dividend events (${eventFilterYear})` : 'Dividend events per year'}
+                  clearable
+                  disabled={eventFilterLoading}
+                  error={eventFilterError}
+                  className="z-30"
                 />
                 <div className="flex items-center gap-2">
                   <label htmlFor="portfolio-sort" className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">

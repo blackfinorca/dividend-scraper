@@ -1,91 +1,46 @@
 [
   {
-    "company": "Amova-STC A_REIT US$",
-    "ticker": "COI",
-    "price": "0.638",
-    "yield": "+0.47% +0.00",
-    "amount": "1.65%",
-    "nextDividend": "2026-01-02",
-    "payDate": ""
-  },
-  {
-    "company": "Amova-ICBCSG CNB S$",
-    "ticker": "ZHS",
-    "price": "0.949",
-    "yield": "+0.00% +0.00",
-    "amount": "1.05%",
-    "nextDividend": "2026-01-02",
-    "payDate": ""
-  },
-  {
-    "company": "Amova STI ETF S$D",
-    "ticker": "G3B",
-    "price": "4.75",
-    "yield": "+0.06% +0.00",
-    "amount": "1.96%",
-    "nextDividend": "2026-01-02",
-    "payDate": ""
-  },
-  {
-    "company": "Amova SGD IGBond ETF",
-    "ticker": "MBH",
-    "price": "1.022",
-    "yield": "+0.10% +0.00",
-    "amount": "1.57%",
-    "nextDividend": "2026-01-02",
-    "payDate": ""
-  },
-  {
-    "company": "ABF SG BOND ETF",
-    "ticker": "A35",
-    "price": "1.129",
-    "yield": "-0.09% 0.00",
-    "amount": "1.18%",
-    "nextDividend": "2026-01-02",
-    "payDate": ""
-  },
-  {
-    "company": "Bumitama Agri",
-    "ticker": "P8Z",
-    "price": "1.34",
-    "yield": "-0.75% -0.01",
-    "amount": "1.87%",
-    "nextDividend": "2026-01-05",
-    "payDate": ""
-  },
-  {
     "company": "PNE Industries",
     "ticker": "BDA",
-    "price": "0.5",
-    "yield": "+2.00% +0.01",
-    "amount": "4%",
+    "price": "0.54",
+    "yield": "+1.85% +0.01",
+    "amount": "3.7%",
     "nextDividend": "2026-01-26",
-    "payDate": ""
-  },
-  {
-    "company": "Frasers Property",
-    "ticker": "TQ5",
-    "price": "1.13",
-    "yield": "+0.00% +0.00",
-    "amount": "3.98%",
-    "nextDividend": "2026-01-30",
     "payDate": ""
   },
   {
     "company": "F & N",
     "ticker": "F99",
     "price": "1.48",
-    "yield": "-0.68% -0.01",
+    "yield": "+0.00% +0.00",
     "amount": "2.7%",
     "nextDividend": "2026-01-30",
     "payDate": ""
   },
   {
+    "company": "Frasers Property",
+    "ticker": "TQ5",
+    "price": "1.13",
+    "yield": "+0.88% +0.01",
+    "amount": "3.98%",
+    "nextDividend": "2026-01-30",
+    "payDate": ""
+  },
+  {
+    "company": "Infinity Dev",
+    "ticker": "ZBA",
+    "price": "0.42",
+    "yield": "+2.38% +0.01",
+    "amount": "4.04%",
+    "nextDividend": "2026-02-04",
+    "payDate": ""
+  },
+  {
     "company": "Kimly",
     "ticker": "1D0",
-    "price": "0.39",
+    "price": "0.395",
     "yield": "+0.00% +0.00",
-    "amount": "2.56%",
+    "amount": "2.53%",
     "nextDividend": "2026-02-04",
     "payDate": ""
   },
@@ -93,7 +48,7 @@
     "company": "Coliwoo Hldgs",
     "ticker": "W8W",
     "price": "0.555",
-    "yield": "+0.90% +0.01",
+    "yield": "+0.00% +0.00",
     "amount": "3.6%",
     "nextDividend": "2026-02-05",
     "payDate": ""
@@ -103,25 +58,25 @@
     "ticker": "Y92",
     "price": "0.46",
     "yield": "-1.09% -0.01",
-    "amount": "4.2%",
+    "amount": "4.17%",
     "nextDividend": "2026-02-05",
     "payDate": ""
   },
   {
     "company": "LHN",
     "ticker": "41O",
-    "price": "0.66",
-    "yield": "+4.55% +0.03",
-    "amount": "1.52%",
+    "price": "0.645",
+    "yield": "-0.78% -0.01",
+    "amount": "1.55%",
     "nextDividend": "2026-02-23",
     "payDate": ""
   },
   {
     "company": "LHN",
     "ticker": "41O",
-    "price": "0.66",
-    "yield": "+4.55% +0.03",
-    "amount": "3.03%",
+    "price": "0.645",
+    "yield": "-0.78% -0.01",
+    "amount": "3.1%",
     "nextDividend": "2026-02-23",
     "payDate": ""
   }
